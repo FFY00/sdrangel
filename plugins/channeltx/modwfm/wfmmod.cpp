@@ -17,15 +17,21 @@
 #include <QTime>
 #include <QDebug>
 #include <QMutexLocker>
+
 #include <stdio.h>
 #include <complex.h>
 #include <algorithm>
+
 #include <dsp/upchannelizer.h>
 #include "dsp/dspengine.h"
 #include "dsp/pidcontroller.h"
+#include "dsp/threadedbasebandsamplesource.h"
+#include "device/devicesinkapi.h"
+
 #include "wfmmod.h"
 
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureWFMMod, Message)
+MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureChannelizer, Message)
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureFileSourceName, Message)
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureFileSourceSeek, Message)
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureAFInput, Message)
@@ -33,10 +39,12 @@ MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureFileSourceStreamTiming, Message)
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgReportFileSourceStreamData, Message)
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgReportFileSourceStreamTiming, Message)
 
+const QString WFMMod::m_channelID = "sdrangel.channeltx.modwfm";
 const int WFMMod::m_levelNbSamples = 480; // every 10ms
 const int WFMMod::m_rfFilterFFTLength = 1024;
 
-WFMMod::WFMMod() :
+WFMMod::WFMMod(DeviceSinkAPI *deviceAPI) :
+    m_deviceAPI(deviceAPI),
 	m_modPhasor(0.0f),
     m_movingAverage(40, 0),
     m_volumeAGC(40, 0),
@@ -52,21 +60,10 @@ WFMMod::WFMMod() :
 {
 	setObjectName("WFMod");
 
-	m_config.m_outputSampleRate = 384000;
-	m_config.m_inputFrequencyOffset = 0;
-	m_config.m_rfBandwidth = 125000;
-	m_config.m_afBandwidth = 8000;
-	m_config.m_fmDeviation = 50000.0f;
-	m_config.m_toneFrequency = 1000.0f;
-	m_config.m_audioSampleRate = DSPEngine::instance()->getAudioSampleRate();
-
-	m_rfFilter = new fftfilt(-62500.0 / 384000.0, 62500.0 / 384000.0, m_rfFilterFFTLength);
+    m_rfFilter = new fftfilt(-62500.0 / 384000.0, 62500.0 / 384000.0, m_rfFilterFFTLength);
     m_rfFilterBuffer = new Complex[m_rfFilterFFTLength];
     memset(m_rfFilterBuffer, 0, sizeof(Complex)*(m_rfFilterFFTLength));
     m_rfFilterBufferIndex = 0;
-
-	apply();
-
 
 	m_audioBuffer.resize(1<<14);
 	m_audioBufferFill = 0;
@@ -75,16 +72,22 @@ WFMMod::WFMMod() :
 	m_volumeAGC.resize(4096, 0.003, 0);
 	m_magsq = 0.0;
 
-	m_toneNco.setFreq(1000.0, m_config.m_audioSampleRate);
-	m_toneNcoRF.setFreq(1000.0, m_config.m_outputSampleRate);
+	m_toneNco.setFreq(1000.0, m_settings.m_audioSampleRate);
+	m_toneNcoRF.setFreq(1000.0, m_settings.m_outputSampleRate);
 	DSPEngine::instance()->addAudioSource(&m_audioFifo);
 
     // CW keyer
-    m_cwKeyer.setSampleRate(m_config.m_outputSampleRate);
-    m_cwSmoother.setNbFadeSamples(m_config.m_outputSampleRate / 250); // 4 ms
+    m_cwKeyer.setSampleRate(m_settings.m_outputSampleRate);
     m_cwKeyer.setWPM(13);
     m_cwKeyer.setMode(CWKeyer::CWNone);
     m_cwKeyer.reset();
+
+    m_channelizer = new UpChannelizer(this);
+    m_threadedChannelizer = new ThreadedBasebandSampleSource(m_channelizer, this);
+    m_deviceAPI->addThreadedSource(m_threadedChannelizer);
+    m_deviceAPI->addChannelAPI(this);
+
+    applySettings(m_settings, true);
 }
 
 WFMMod::~WFMMod()
@@ -92,24 +95,15 @@ WFMMod::~WFMMod()
     delete m_rfFilter;
     delete[] m_rfFilterBuffer;
     DSPEngine::instance()->removeAudioSource(&m_audioFifo);
-}
-
-void WFMMod::configure(MessageQueue* messageQueue,
-		Real rfBandwidth,
-		Real afBandwidth,
-		float fmDeviation,
-		float toneFrequency,
-		float volumeFactor,
-		bool channelMute,
-		bool playLoop)
-{
-	Message* cmd = MsgConfigureWFMMod::create(rfBandwidth, afBandwidth, fmDeviation, toneFrequency, volumeFactor, channelMute, playLoop);
-	messageQueue->push(cmd);
+    m_deviceAPI->removeChannelAPI(this);
+    m_deviceAPI->removeThreadedSource(m_threadedChannelizer);
+    delete m_threadedChannelizer;
+    delete m_channelizer;
 }
 
 void WFMMod::pull(Sample& sample)
 {
-	if (m_running.m_channelMute)
+	if (m_settings.m_channelMute)
 	{
 		sample.m_real = 0.0f;
 		sample.m_imag = 0.0f;
@@ -138,7 +132,7 @@ void WFMMod::pull(Sample& sample)
 	    pullAF(ri);
 	}
 
-    m_modPhasor += (m_running.m_fmDeviation / (float) m_running.m_outputSampleRate) * ri.real() * M_PI * 2.0f;
+    m_modPhasor += (m_settings.m_fmDeviation / (float) m_settings.m_outputSampleRate) * ri.real() * M_PI * 2.0f;
     ci.real(cos(m_modPhasor) * 29204.0f); // -1 dB
     ci.imag(sin(m_modPhasor) * 29204.0f);
 
@@ -168,7 +162,7 @@ void WFMMod::pull(Sample& sample)
 
 void WFMMod::pullAudio(int nbSamples)
 {
-    unsigned int nbSamplesAudio = nbSamples * ((Real) m_config.m_audioSampleRate / (Real) m_config.m_basebandSampleRate);
+    unsigned int nbSamplesAudio = nbSamples * ((Real) m_settings.m_audioSampleRate / (Real) m_settings.m_basebandSampleRate);
 
     if (nbSamplesAudio > m_audioBuffer.size())
     {
@@ -184,7 +178,7 @@ void WFMMod::pullAF(Complex& sample)
     switch (m_afInput)
     {
     case WFMModInputTone:
-        sample.real(m_toneNcoRF.next() * m_running.m_volumeFactor);
+        sample.real(m_toneNcoRF.next() * m_settings.m_volumeFactor);
         sample.imag(0.0f);
         break;
     case WFMModInputFile:
@@ -194,7 +188,7 @@ void WFMMod::pullAF(Complex& sample)
         {
             if (m_ifstream.eof())
             {
-            	if (m_running.m_playLoop)
+            	if (m_settings.m_playLoop)
             	{
                     m_ifstream.clear();
                     m_ifstream.seekg(0, std::ios::beg);
@@ -210,7 +204,7 @@ void WFMMod::pullAF(Complex& sample)
             {
                 Real s;
             	m_ifstream.read(reinterpret_cast<char*>(&s), sizeof(Real));
-            	sample.real(s * m_running.m_volumeFactor);
+            	sample.real(s * m_settings.m_volumeFactor);
                 sample.imag(0.0f);
             }
         }
@@ -222,7 +216,7 @@ void WFMMod::pullAF(Complex& sample)
         break;
     case WFMModInputAudio:
         {
-            sample.real(((m_audioBuffer[m_audioBufferFill].l + m_audioBuffer[m_audioBufferFill].r) / 65536.0f) * m_running.m_volumeFactor);
+            sample.real(((m_audioBuffer[m_audioBufferFill].l + m_audioBuffer[m_audioBufferFill].r) / 65536.0f) * m_settings.m_volumeFactor);
             sample.imag(0.0f);
         }
         break;
@@ -231,15 +225,15 @@ void WFMMod::pullAF(Complex& sample)
 
         if (m_cwKeyer.getSample())
         {
-            m_cwSmoother.getFadeSample(true, fadeFactor);
-            sample.real(m_toneNcoRF.next() * m_running.m_volumeFactor * fadeFactor);
+            m_cwKeyer.getCWSmoother().getFadeSample(true, fadeFactor);
+            sample.real(m_toneNcoRF.next() * m_settings.m_volumeFactor * fadeFactor);
             sample.imag(0.0f);
         }
         else
         {
-            if (m_cwSmoother.getFadeSample(false, fadeFactor))
+            if (m_cwKeyer.getCWSmoother().getFadeSample(false, fadeFactor))
             {
-                sample.real(m_toneNcoRF.next() * m_running.m_volumeFactor * fadeFactor);
+                sample.real(m_toneNcoRF.next() * m_settings.m_volumeFactor * fadeFactor);
                 sample.imag(0.0f);
             }
             else
@@ -279,8 +273,8 @@ void WFMMod::calculateLevel(const Real& sample)
 
 void WFMMod::start()
 {
-	qDebug() << "WFMMod::start: m_outputSampleRate: " << m_config.m_outputSampleRate
-			<< " m_inputFrequencyOffset: " << m_config.m_inputFrequencyOffset;
+	qDebug() << "WFMMod::start: m_outputSampleRate: " << m_settings.m_outputSampleRate
+			<< " m_inputFrequencyOffset: " << m_settings.m_inputFrequencyOffset;
 
 	m_audioFifo.clear();
 }
@@ -295,44 +289,60 @@ bool WFMMod::handleMessage(const Message& cmd)
 	{
 		UpChannelizer::MsgChannelizerNotification& notif = (UpChannelizer::MsgChannelizerNotification&) cmd;
 
-		m_config.m_basebandSampleRate = notif.getBasebandSampleRate();
-        m_config.m_outputSampleRate = notif.getSampleRate();
-		m_config.m_inputFrequencyOffset = notif.getFrequencyOffset();
+		WFMModSettings settings = m_settings;
 
-		apply();
+		settings.m_basebandSampleRate = notif.getBasebandSampleRate();
+		settings.m_outputSampleRate = notif.getSampleRate();
+		settings.m_inputFrequencyOffset = notif.getFrequencyOffset();
+
+		applySettings(settings);
 
 		qDebug() << "WFMMod::handleMessage: MsgChannelizerNotification:"
-				<< " m_basebandSampleRate: " << m_config.m_basebandSampleRate
-                << " m_outputSampleRate: " << m_config.m_outputSampleRate
-				<< " m_inputFrequencyOffset: " << m_config.m_inputFrequencyOffset;
+				<< " m_basebandSampleRate: " << settings.m_basebandSampleRate
+                << " m_outputSampleRate: " << settings.m_outputSampleRate
+				<< " m_inputFrequencyOffset: " << settings.m_inputFrequencyOffset;
 
 		return true;
 	}
-	else if (MsgConfigureWFMMod::match(cmd))
-	{
-	    MsgConfigureWFMMod& cfg = (MsgConfigureWFMMod&) cmd;
+    else if (MsgConfigureChannelizer::match(cmd))
+    {
+        MsgConfigureChannelizer& cfg = (MsgConfigureChannelizer&) cmd;
 
-		m_config.m_rfBandwidth = cfg.getRFBandwidth();
-		m_config.m_afBandwidth = cfg.getAFBandwidth();
-		m_config.m_fmDeviation = cfg.getFMDeviation();
-		m_config.m_toneFrequency = cfg.getToneFrequency();
-		m_config.m_volumeFactor = cfg.getVolumeFactor();
-		m_config.m_channelMute = cfg.getChannelMute();
-		m_config.m_playLoop = cfg.getPlayLoop();
+        m_channelizer->configure(m_channelizer->getInputMessageQueue(),
+            cfg.getSampleRate(),
+            cfg.getCenterFrequency());
 
-		apply();
+        qDebug() << "WFMMod::handleMessage: MsgConfigureChannelizer:"
+                << " getSampleRate: " << cfg.getSampleRate()
+                << " getCenterFrequency: " << cfg.getCenterFrequency();
 
-		qDebug() << "WFMMod::handleMessage: MsgConfigureWFMMod:"
-				<< " m_rfBandwidth: " << m_config.m_rfBandwidth
-				<< " m_afBandwidth: " << m_config.m_afBandwidth
-				<< " m_fmDeviation: " << m_config.m_fmDeviation
-                << " m_toneFrequency: " << m_config.m_toneFrequency
-                << " m_volumeFactor: " << m_config.m_volumeFactor
-				<< " m_channelMute: " << m_config.m_channelMute
-				<< " m_playLoop: " << m_config.m_playLoop;
+        return true;
+    }
+    else if (MsgConfigureWFMMod::match(cmd))
+    {
+        MsgConfigureWFMMod& cfg = (MsgConfigureWFMMod&) cmd;
 
-		return true;
-	}
+        WFMModSettings settings = cfg.getSettings();
+
+        m_absoluteFrequencyOffset = settings.m_inputFrequencyOffset;
+        settings.m_basebandSampleRate = m_settings.m_basebandSampleRate;
+        settings.m_outputSampleRate = m_settings.m_outputSampleRate;
+        settings.m_inputFrequencyOffset = m_settings.m_inputFrequencyOffset;
+
+        qDebug() << "NFWFMMod::handleMessage: MsgConfigureWFMMod:"
+                << " m_rfBandwidth: " << settings.m_rfBandwidth
+                << " m_afBandwidth: " << settings.m_afBandwidth
+                << " m_fmDeviation: " << settings.m_fmDeviation
+                << " m_volumeFactor: " << settings.m_volumeFactor
+                << " m_toneFrequency: " << settings.m_toneFrequency
+                << " m_channelMute: " << settings.m_channelMute
+                << " m_playLoop: " << settings.m_playLoop
+                << " force: " << cfg.getForce();
+
+        applySettings(settings, cfg.getForce());
+
+        return true;
+    }
 	else if (MsgConfigureFileSourceName::match(cmd))
     {
         MsgConfigureFileSourceName& conf = (MsgConfigureFileSourceName&) cmd;
@@ -367,7 +377,7 @@ bool WFMMod::handleMessage(const Message& cmd)
 
     	MsgReportFileSourceStreamTiming *report;
         report = MsgReportFileSourceStreamTiming::create(samplesCount);
-        getOutputMessageQueue()->push(report);
+        getMessageQueueToGUI()->push(report);
 
         return true;
     }
@@ -375,73 +385,6 @@ bool WFMMod::handleMessage(const Message& cmd)
 	{
 		return false;
 	}
-}
-
-void WFMMod::apply()
-{
-
-	if ((m_config.m_inputFrequencyOffset != m_running.m_inputFrequencyOffset) ||
-	    (m_config.m_outputSampleRate != m_running.m_outputSampleRate))
-	{
-        m_settingsMutex.lock();
-		m_carrierNco.setFreq(m_config.m_inputFrequencyOffset, m_config.m_outputSampleRate);
-        m_settingsMutex.unlock();
-	}
-
-	if((m_config.m_outputSampleRate != m_running.m_outputSampleRate) ||
-	    (m_config.m_audioSampleRate != m_running.m_audioSampleRate) ||
-		(m_config.m_afBandwidth != m_running.m_afBandwidth))
-	{
-		m_settingsMutex.lock();
-        m_interpolatorDistanceRemain = 0;
-        m_interpolatorConsumed = false;
-        m_interpolatorDistance = (Real) m_config.m_audioSampleRate / (Real) m_config.m_outputSampleRate;
-        m_interpolator.create(48, m_config.m_audioSampleRate, m_config.m_rfBandwidth / 2.2, 3.0);
-		m_settingsMutex.unlock();
-	}
-
-	if ((m_config.m_rfBandwidth != m_running.m_rfBandwidth) ||
-		(m_config.m_outputSampleRate != m_running.m_outputSampleRate))
-	{
-		m_settingsMutex.lock();
-        Real lowCut = -(m_config.m_rfBandwidth / 2.0) / m_config.m_outputSampleRate;
-        Real hiCut  = (m_config.m_rfBandwidth / 2.0) / m_config.m_outputSampleRate;
-        m_rfFilter->create_filter(lowCut, hiCut);
-		m_settingsMutex.unlock();
-	}
-
-	if ((m_config.m_toneFrequency != m_running.m_toneFrequency) ||
-	    (m_config.m_audioSampleRate != m_running.m_audioSampleRate))
-	{
-        m_settingsMutex.lock();
-        m_toneNco.setFreq(m_config.m_toneFrequency, m_config.m_audioSampleRate);
-        m_settingsMutex.unlock();
-	}
-
-    if ((m_config.m_toneFrequency != m_running.m_toneFrequency) ||
-        (m_config.m_outputSampleRate != m_running.m_outputSampleRate))
-    {
-        m_settingsMutex.lock();
-        m_toneNcoRF.setFreq(m_config.m_toneFrequency, m_config.m_outputSampleRate);
-        m_settingsMutex.unlock();
-    }
-
-    if (m_config.m_outputSampleRate != m_running.m_outputSampleRate)
-    {
-        m_cwKeyer.setSampleRate(m_config.m_outputSampleRate);
-        m_cwSmoother.setNbFadeSamples(m_config.m_outputSampleRate / 250); // 4 ms
-        m_cwKeyer.reset();
-    }
-
-	m_running.m_outputSampleRate = m_config.m_outputSampleRate;
-	m_running.m_inputFrequencyOffset = m_config.m_inputFrequencyOffset;
-	m_running.m_rfBandwidth = m_config.m_rfBandwidth;
-	m_running.m_afBandwidth = m_config.m_afBandwidth;
-	m_running.m_fmDeviation = m_config.m_fmDeviation;
-    m_running.m_volumeFactor = m_config.m_volumeFactor;
-	m_running.m_audioSampleRate = m_config.m_audioSampleRate;
-	m_running.m_channelMute = m_config.m_channelMute;
-	m_running.m_playLoop = m_config.m_playLoop;
 }
 
 void WFMMod::openFileStream()
@@ -463,7 +406,7 @@ void WFMMod::openFileStream()
 
     MsgReportFileSourceStreamData *report;
     report = MsgReportFileSourceStreamData::create(m_sampleRate, m_recordLength);
-    getOutputMessageQueue()->push(report);
+    getMessageQueueToGUI()->push(report);
 }
 
 void WFMMod::seekFileStream(int seekPercentage)
@@ -477,4 +420,61 @@ void WFMMod::seekFileStream(int seekPercentage)
         m_ifstream.clear();
         m_ifstream.seekg(seekPoint, std::ios::beg);
     }
+}
+
+void WFMMod::applySettings(const WFMModSettings& settings, bool force)
+{
+    if ((settings.m_inputFrequencyOffset != m_settings.m_inputFrequencyOffset) ||
+        (settings.m_outputSampleRate != m_settings.m_outputSampleRate))
+    {
+        m_settingsMutex.lock();
+        m_carrierNco.setFreq(settings.m_inputFrequencyOffset, settings.m_outputSampleRate);
+        m_settingsMutex.unlock();
+    }
+
+    if((settings.m_outputSampleRate != m_settings.m_outputSampleRate) ||
+        (settings.m_audioSampleRate != m_settings.m_audioSampleRate) ||
+        (settings.m_afBandwidth != m_settings.m_afBandwidth) || force)
+    {
+        m_settingsMutex.lock();
+        m_interpolatorDistanceRemain = 0;
+        m_interpolatorConsumed = false;
+        m_interpolatorDistance = (Real) settings.m_audioSampleRate / (Real) settings.m_outputSampleRate;
+        m_interpolator.create(48, settings.m_audioSampleRate, settings.m_rfBandwidth / 2.2, 3.0);
+        m_settingsMutex.unlock();
+    }
+
+    if ((settings.m_rfBandwidth != m_settings.m_rfBandwidth) ||
+        (settings.m_outputSampleRate != m_settings.m_outputSampleRate) || force)
+    {
+        m_settingsMutex.lock();
+        Real lowCut = -(settings.m_rfBandwidth / 2.0) / settings.m_outputSampleRate;
+        Real hiCut  = (settings.m_rfBandwidth / 2.0) / settings.m_outputSampleRate;
+        m_rfFilter->create_filter(lowCut, hiCut);
+        m_settingsMutex.unlock();
+    }
+
+    if ((settings.m_toneFrequency != m_settings.m_toneFrequency) ||
+        (settings.m_audioSampleRate != m_settings.m_audioSampleRate) || force)
+    {
+        m_settingsMutex.lock();
+        m_toneNco.setFreq(settings.m_toneFrequency, settings.m_audioSampleRate);
+        m_settingsMutex.unlock();
+    }
+
+    if ((settings.m_toneFrequency != m_settings.m_toneFrequency) ||
+        (settings.m_outputSampleRate != m_settings.m_outputSampleRate) || force)
+    {
+        m_settingsMutex.lock();
+        m_toneNcoRF.setFreq(settings.m_toneFrequency, settings.m_outputSampleRate);
+        m_settingsMutex.unlock();
+    }
+
+    if ((settings.m_outputSampleRate != m_settings.m_outputSampleRate) || force)
+    {
+        m_cwKeyer.setSampleRate(settings.m_outputSampleRate);
+        m_cwKeyer.reset();
+    }
+
+    m_settings = settings;
 }

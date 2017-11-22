@@ -40,18 +40,21 @@ public:
 
 	public:
 		const FCDProPlusSettings& getSettings() const { return m_settings; }
+		bool getForce() const { return m_force; }
 
-		static MsgConfigureFCD* create(const FCDProPlusSettings& settings)
+		static MsgConfigureFCD* create(const FCDProPlusSettings& settings, bool force)
 		{
-			return new MsgConfigureFCD(settings);
+			return new MsgConfigureFCD(settings, force);
 		}
 
 	private:
 		FCDProPlusSettings m_settings;
+		bool m_force;
 
-		MsgConfigureFCD(const FCDProPlusSettings& settings) :
+		MsgConfigureFCD(const FCDProPlusSettings& settings, bool force) :
 			Message(),
-			m_settings(settings)
+			m_settings(settings),
+			m_force(force)
 		{ }
 	};
 
@@ -76,6 +79,7 @@ public:
 
 	FCDProPlusInput(DeviceSourceAPI *deviceAPI);
 	virtual ~FCDProPlusInput();
+	virtual void destroy();
 
 	virtual bool start();
 	virtual void stop();

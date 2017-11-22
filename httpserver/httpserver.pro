@@ -10,6 +10,7 @@ TEMPLATE = lib
 TARGET = httpserver
 
 INCLUDEPATH += $$PWD
+QMAKE_CXXFLAGS += -std=c++11
 
 CONFIG(Release):build_subdir = release
 CONFIG(Debug):build_subdir = debug
@@ -29,7 +30,11 @@ HEADERS += $$PWD/httpglobal.h \
            $$PWD/httprequesthandler.h \
            $$PWD/httpsession.h \
            $$PWD/httpsessionstore.h \
-           $$PWD/staticfilecontroller.h
+           $$PWD/staticfilecontroller.h \
+           $$PWD/httplistenersettings.h \
+           $$PWD/httpdocrootsettings.h \
+           $$PWD/httpsessionssettings.h
+           
 
 SOURCES += $$PWD/httpglobal.cpp \
            $$PWD/httplistener.cpp \

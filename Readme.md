@@ -35,11 +35,12 @@ From version 2 SDRangel can integrate more than one hardware device running conc
 
 <h2>Transmission support</h2>
 
-From version 3 transmission or signal generation is supported for BladeRF, HackRF (since version 3.1) and LimeSDR (since version 3.4) using a sample sink plugin. These plugins are:
+From version 3 transmission or signal generation is supported for BladeRF, HackRF (since version 3.1), LimeSDR (since version 3.4) and PlutoSDR (since version 3.7.8) using a sample sink plugin. These plugins are:
 
   - [BladeRF output plugin](https://github.com/f4exb/sdrangel/tree/dev/plugins/samplesink/bladerfoutput) limited support in Windows
   - [HackRF output plugin](https://github.com/f4exb/sdrangel/tree/dev/plugins/samplesink/hackrfoutput)
   - [LimeSDR output plugin](https://github.com/f4exb/sdrangel/tree/dev/plugins/samplesink/limesdroutput)
+  - [PlutoSDR output plugin](https://github.com/f4exb/sdrangel/tree/dev/plugins/samplesink/plutosdroutput)
   - [File output or file sink plugin](https://github.com/f4exb/sdrangel/tree/dev/plugins/samplesink/filesink)
   - [Remote device via Network with SDRdaemon](https://github.com/f4exb/sdrangel/tree/dev/plugins/samplesink/sdrdaemonsink) Linux only
 
@@ -102,7 +103,7 @@ HackRF is better used with a sampling rate of 4.8 MS/s and above. The 2.4 and 3.
 
 <h2>LimeSDR</h2>
 
-&#9888; LimeSuite library is difficult to implement due to the lack of documentation. The plugins should work normally when running as single instances. Support of both Rx and/or both Rx running concurrently is experimental.
+<b>&#9888; LimeSuite library is difficult to implement due to the lack of documentation. The plugins should work normally when running as single instances. Support of many Rx and/or Tx instances running concurrently is considered experimental.</b>
 
 You will need a minimal installation of LimeSuite:
 
@@ -111,7 +112,7 @@ You will need a minimal installation of LimeSuite:
   - `cd LimeSuite`
   - `mkdir builddir`
   - `cd builddir`
-  - `cmake -DCMAKE_INSTALL_PREFIX=/opt/install/LimeSuite`
+  - `cmake -DCMAKE_INSTALL_PREFIX=/opt/install/LimeSuite ..`
   - `make -j8`
   - `make install`
 
@@ -121,11 +122,9 @@ Then add the following defines on `cmake` command line:
 
 <h2>PlutoSDR</h2>
 
-PlutoSDR is supported with the libiio interface. This library should be installed in your system for proper build of the software and operation support. Add `libiio-dev` to the list of dependencies to install. Be aware that version 0.10 is needed and is not available yet in all distributions. You may have to compile it from source instead.
+PlutoSDR (Rx only) is supported with the libiio interface. This library should be installed in your system for proper build of the software and operation support. Add `libiio-dev` to the list of dependencies to install. Be aware that version 0.10 is needed and is not available yet in all distributions. You may have to compile it from source instead.
 
 If you use your own location for libiio install directory you need to specify library and include locations. Example with `/opt/install/libiio` with the following defines on `cmake` command line: `-DLIBIIO_INCLUDE_DIR=/opt/install/libiio/include -DLIBIIO_LIBRARY=/opt/install/libiio/lib/libiio.so`
-
-Only the Rx part is supported at the moment.
 
 <h2>RTL-SDR</h2>
 
@@ -234,16 +233,14 @@ If you are not comfortable with this just do not install DSDcc and/or mbelib and
 
 In the [releases](https://github.com/f4exb/sdrangel/releases) section one can find binary distributions for some common systems:
 
-  - Windows 32 bit (runs in 64 bit Windows) 
+  - Windows 32 bit (runs also in 64 bit Windows) 
   - Debian x86_64 (Ubuntu 16.04, Ubuntu 17.04, Debian Stretch)
-  - Windows 64 bit until v3.5.4
+  - Windows 64 bit
   - Debian armv7l (Debian Jessie) until v3.5.0
   
 <h2>Windows distributions</h2>
 
 This is the archive of the complete binary distribution that expands to the `sdrangel64` directory for the 64 bit version and `sdrangel` for the 32 bit version. You can install it anywhere you like and click on `sdrangel.exe` to start.
-
-Starting at release v3.5.5 there are no more Windows64 distributions
 
 <h2>Debian distributions</h2>
 
@@ -277,8 +274,8 @@ The software is installed in `/opt/sdrangel` you can start it from the command l
 To be sure you will need at least Qt version 5.5. It definitely does not work with versions earlier than 5.3 but neither 5.3 nor 5.4 were tested.
 
   - Linux builds are made with 5.5.1
-  - Windows 32 build is made with 5.5.1
-  - Windows 64 build is made with 5.6 
+  - Windows 32 build is made with 5.9.1
+  - Windows 64 build is made with 5.9.1 
 
 <h2>Ubuntu</h2>
 
@@ -297,7 +294,7 @@ Install cmake version 3:
 
 <h3>With newer versions just do:</h3>
 
-  - `sudo apt-get install cmake g++ pkg-config libfftw3-dev libqt5multimedia5-plugins qtmultimedia5-dev qttools5-dev qttools5-dev-tools libqt5opengl5-dev qtbase5-dev libusb-1.0 librtlsdr-dev libboost-all-dev libasound2-dev pulseaudio libnanomsg-dev libopencv-dev libsqlite3-dev`
+  - `sudo apt-get install cmake g++ pkg-config libfftw3-dev libqt5multimedia5-plugins qtmultimedia5-dev qttools5-dev qttools5-dev-tools libqt5opengl5-dev qtbase5-dev libusb-1.0 librtlsdr-dev libboost-all-dev libasound2-dev pulseaudio libnanomsg-dev libopencv-dev libsqlite3-dev libxml2-dev`
   - `mkdir build && cd build && cmake ../ && make`
 
 `librtlsdr-dev` is in the `universe` repo. (utopic 14.10 amd64.)
@@ -329,7 +326,7 @@ This has been tested with the bleeding edge "Thumbleweed" distribution:
 Then you should be all set to build the software with `cmake` and `make` as discussed earlier.
 
   - Note1 for udev rules: installed udev rules for BladeRF and HackRF are targetted at Debian or Ubuntu systems that have a plugdev group for USB hotplug devices. This is not the case in openSUSE. To make the udev rules file compatible just remove the `GROUP` parameter on all lines and change `MODE` parameter to `666`.
-  - Note2: A package has been created (thanks Martin!), see: [sdrangel](http://software.opensuse.org/download.html?project=home%3Amnhauke%3Asdr&package=sdrangel). It is based on the 1.0.1 release.
+  - Note2: A package has been created in OpenSUSE thanks to Martin, see: [sdrangel](https://build.opensuse.org/package/show/hardware:sdr/sdrangel). It is based on the latest release on master branch.
 
 <h2>Fedora</h2>
 
@@ -408,6 +405,6 @@ Other ideas:
   - Level calibration
   - Even more demods. Contributors welcome!
 
-<h1>Developper's notes</h1>
+<h1>Developer's notes</h1>
 
-Please check the developper's specific [readme](./ReadmeDevelopper.md)
+Please check the developper's specific [readme](./ReadmeDeveloper.md)

@@ -6,18 +6,49 @@
 #include "httpconnectionhandler.h"
 #include "httpresponse.h"
 
-using namespace stefanfrings;
+using namespace qtwebapp;
 
 HttpConnectionHandler::HttpConnectionHandler(QSettings* settings, HttpRequestHandler* requestHandler, QSslConfiguration* sslConfiguration)
-    : QThread()
+    : QThread(), useQtSettings(true)
 {
-    Q_ASSERT(settings!=0);
-    Q_ASSERT(requestHandler!=0);
-    this->settings=settings;
-    this->requestHandler=requestHandler;
-    this->sslConfiguration=sslConfiguration;
-    currentRequest=0;
+    Q_ASSERT(settings != 0);
+    Q_ASSERT(requestHandler != 0);
+    this->settings = settings;
+    this->listenerSettings = 0;
+    this->requestHandler = requestHandler;
+    this->sslConfiguration = sslConfiguration;
+    currentRequest = 0;
     busy=false;
+
+    // Create TCP or SSL socket
+    createSocket();
+
+    // execute signals in my own thread
+    moveToThread(this);
+    socket->moveToThread(this);
+    readTimer.moveToThread(this);
+
+    // Connect signals
+    connect(socket, SIGNAL(readyRead()), SLOT(read()));
+    connect(socket, SIGNAL(disconnected()), SLOT(disconnected()));
+    connect(&readTimer, SIGNAL(timeout()), SLOT(readTimeout()));
+    readTimer.setSingleShot(true);
+
+    qDebug("HttpConnectionHandler (%p): constructed", this);
+    this->start();
+}
+
+HttpConnectionHandler::HttpConnectionHandler(const HttpListenerSettings* settings, HttpRequestHandler* requestHandler, QSslConfiguration* sslConfiguration)
+    : QThread(), useQtSettings(false)
+{
+    Q_ASSERT(settings != 0);
+    Q_ASSERT(requestHandler != 0);
+    this->settings = 0;
+    this->listenerSettings = settings;
+    this->requestHandler = requestHandler;
+    this->sslConfiguration = sslConfiguration;
+    currentRequest = 0;
+    busy = false;
 
     // Create TCP or SSL socket
     createSocket();
@@ -109,7 +140,7 @@ void HttpConnectionHandler::handleConnection(tSocketDescriptor socketDescriptor)
     #endif
 
     // Start timer for read timeout
-    int readTimeout=settings->value("readTimeout",10000).toInt();
+    int readTimeout = useQtSettings ? settings->value("readTimeout",10000).toInt() : listenerSettings->readTimeout;
     readTimer.start(readTimeout);
     // delete previous request
     delete currentRequest;
@@ -162,7 +193,11 @@ void HttpConnectionHandler::read()
         // Create new HttpRequest object if necessary
         if (!currentRequest)
         {
-            currentRequest=new HttpRequest(settings);
+            if (useQtSettings) {
+                currentRequest = new HttpRequest(settings);
+            } else {
+                currentRequest = new HttpRequest(listenerSettings);
+            }
         }
 
         // Collect data for the request object
@@ -173,7 +208,7 @@ void HttpConnectionHandler::read()
             {
                 // Restart timer for read timeout, otherwise it would
                 // expire during large file uploads.
-                int readTimeout=settings->value("readTimeout",10000).toInt();
+                int readTimeout = useQtSettings ? settings->value("readTimeout",10000).toInt() : listenerSettings->readTimeout;
                 readTimer.start(readTimeout);
             }
         }
@@ -267,7 +302,7 @@ void HttpConnectionHandler::read()
             else
             {
                 // Start timer for next request
-                int readTimeout=settings->value("readTimeout",10000).toInt();
+                int readTimeout = useQtSettings ? settings->value("readTimeout",10000).toInt() : listenerSettings->readTimeout;
                 readTimer.start(readTimeout);
             }
             delete currentRequest;

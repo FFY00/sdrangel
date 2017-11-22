@@ -20,6 +20,7 @@
 #include "rtlsdrgui.h"
 
 #include <device/devicesourceapi.h>
+#include "device/deviceuiset.h"
 #include <dsp/filerecord.h>
 
 #include "ui_rtlsdrgui.h"
@@ -28,23 +29,24 @@
 #include "dsp/dspengine.h"
 #include "dsp/dspcommands.h"
 
-RTLSDRGui::RTLSDRGui(DeviceSourceAPI *deviceAPI, QWidget* parent) :
+
+RTLSDRGui::RTLSDRGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	QWidget(parent),
 	ui(new Ui::RTLSDRGui),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
+	m_forceSettings(true),
 	m_settings(),
 	m_sampleSource(0),
 	m_lastEngineState((DSPDeviceSourceEngine::State)-1)
 {
-    m_sampleSource = new RTLSDRInput(m_deviceAPI);
-    m_deviceAPI->setSource(m_sampleSource);
+    m_sampleSource = (RTLSDRInput*) m_deviceUISet->m_deviceSourceAPI->getSampleSource();
 
     ui->setupUi(this);
 	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-	ui->centerFrequency->setValueRange(7, 24000U, 1900000U);
+	updateFrequencyLimits();
 
     ui->sampleRate->setColorMapper(ColorMapper(ColorMapper::GrayGreenYellow));
-    ui->sampleRate->setValueRange(7, 950000U, 2400000U);
+    ui->sampleRate->setValueRange(7, RTLSDRInput::sampleRateHighRangeMin, RTLSDRInput::sampleRateHighRangeMax);
 
 	connect(&m_updateTimer, SIGNAL(timeout()), this, SLOT(updateHardware()));
 	connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
@@ -52,16 +54,12 @@ RTLSDRGui::RTLSDRGui(DeviceSourceAPI *deviceAPI, QWidget* parent) :
 
 	displaySettings();
 
-	connect(m_sampleSource->getOutputMessageQueueToGUI(), SIGNAL(messageEnqueued()), this, SLOT(handleSourceMessages()));
-    connect(m_deviceAPI->getDeviceOutputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleDSPMessages()), Qt::QueuedConnection);
-
-    queryDeviceReport(); // will reply with MsgReportRTLSDR to report gain list
+	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 }
 
 RTLSDRGui::~RTLSDRGui()
 {
 	delete ui;
-	delete m_sampleSource;
 }
 
 void RTLSDRGui::destroy()
@@ -121,6 +119,7 @@ bool RTLSDRGui::deserialize(const QByteArray& data)
     {
         displayGains();
         displaySettings();
+        m_forceSettings = true;
         sendSettings();
         return true;
     }
@@ -135,7 +134,6 @@ bool RTLSDRGui::handleMessage(const Message& message)
 {
 	if (RTLSDRInput::MsgReportRTLSDR::match(message))
 	{
-		qDebug() << "RTLSDRGui::handleMessage: MsgReportRTLSDR";
 		m_gains = ((RTLSDRInput::MsgReportRTLSDR&) message).getGains();
 		displayGains();
 		return true;
@@ -146,47 +144,54 @@ bool RTLSDRGui::handleMessage(const Message& message)
 	}
 }
 
-void RTLSDRGui::handleDSPMessages()
+void RTLSDRGui::handleInputMessages()
 {
     Message* message;
 
-    while ((message = m_deviceAPI->getDeviceOutputMessageQueue()->pop()) != 0)
+    while ((message = m_inputMessageQueue.pop()) != 0)
     {
-        qDebug("RTLSDRGui::handleDSPMessages: message: %s", message->getIdentifier());
+        qDebug("RTLSDRGui::handleInputMessages: message: %s", message->getIdentifier());
 
         if (DSPSignalNotification::match(*message))
         {
             DSPSignalNotification* notif = (DSPSignalNotification*) message;
             m_sampleRate = notif->getSampleRate();
             m_deviceCenterFrequency = notif->getCenterFrequency();
-            qDebug("RTLSDRGui::handleDSPMessages: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
+            qDebug("RTLSDRGui::handleInputMessages: DSPSignalNotification: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
             updateSampleRateAndFrequency();
 
             delete message;
         }
+        else
+        {
+            if (handleMessage(*message))
+            {
+                delete message;
+            }
+        }
     }
-}
-
-void RTLSDRGui::handleSourceMessages()
-{
-	Message* message;
-
-	while ((message = m_sampleSource->getOutputMessageQueueToGUI()->pop()) != 0)
-	{
-		qDebug("RTLSDRGui::HandleSourceMessages: message: %s", message->getIdentifier());
-
-		if (handleMessage(*message))
-		{
-			delete message;
-		}
-	}
 }
 
 void RTLSDRGui::updateSampleRateAndFrequency()
 {
-    m_deviceAPI->getSpectrum()->setSampleRate(m_sampleRate);
-    m_deviceAPI->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
+    m_deviceUISet->getSpectrum()->setSampleRate(m_sampleRate);
+    m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
     ui->deviceRateText->setText(tr("%1k").arg(QString::number(m_sampleRate / 1000.0f, 'g', 5)));
+}
+
+void RTLSDRGui::updateFrequencyLimits()
+{
+    // values in kHz
+    qint64 deltaFrequency = m_settings.m_transverterMode ? m_settings.m_transverterDeltaFrequency/1000 : 0;
+    qint64 minLimit = (m_settings.m_noModMode ? RTLSDRInput::frequencyLowRangeMin : RTLSDRInput::frequencyHighRangeMin) + deltaFrequency;
+    qint64 maxLimit = (m_settings.m_noModMode ? RTLSDRInput::frequencyLowRangeMax : RTLSDRInput::frequencyHighRangeMax) + deltaFrequency;
+
+    minLimit = minLimit < 0 ? 0 : minLimit > 9999999 ? 9999999 : minLimit;
+    maxLimit = maxLimit < 0 ? 0 : maxLimit > 9999999 ? 9999999 : maxLimit;
+
+    qDebug("RTLSDRGui::updateFrequencyLimits: delta: %lld min: %lld max: %lld", deltaFrequency, minLimit, maxLimit);
+
+    ui->centerFrequency->setValueRange(7, minLimit, maxLimit);
 }
 
 void RTLSDRGui::displayGains()
@@ -220,6 +225,9 @@ void RTLSDRGui::displayGains()
 
 void RTLSDRGui::displaySettings()
 {
+    ui->transverter->setDeltaFrequency(m_settings.m_transverterDeltaFrequency);
+    ui->transverter->setDeltaFrequencyActive(m_settings.m_transverterMode);
+    updateFrequencyLimits();
 	ui->centerFrequency->setValue(m_settings.m_centerFrequency / 1000);
 	ui->sampleRate->setValue(m_settings.m_devSampleRate);
 	ui->dcOffset->setChecked(m_settings.m_dcBlock);
@@ -228,6 +236,8 @@ void RTLSDRGui::displaySettings()
 	ui->ppmText->setText(tr("%1").arg(m_settings.m_loPpmCorrection));
 	ui->decim->setCurrentIndex(m_settings.m_log2Decim);
 	ui->fcPos->setCurrentIndex((int) m_settings.m_fcPos);
+	ui->checkBox->setChecked(m_settings.m_noModMode);
+	ui->agc->setChecked(m_settings.m_agc);
 }
 
 void RTLSDRGui::sendSettings()
@@ -297,23 +307,19 @@ void RTLSDRGui::on_gain_valueChanged(int value)
 	sendSettings();
 }
 
-void RTLSDRGui::on_sampleRate_currentIndexChanged(int index __attribute__((unused)))
-{
-}
-
 void RTLSDRGui::on_startStop_toggled(bool checked)
 {
     if (checked)
     {
-        if (m_deviceAPI->initAcquisition())
+        if (m_deviceUISet->m_deviceSourceAPI->initAcquisition())
         {
-            m_deviceAPI->startAcquisition();
+            m_deviceUISet->m_deviceSourceAPI->startAcquisition();
             DSPEngine::instance()->startAudioOutput();
         }
     }
     else
     {
-        m_deviceAPI->stopAcquisition();
+        m_deviceUISet->m_deviceSourceAPI->stopAcquisition();
         DSPEngine::instance()->stopAudioOutput();
     }
 }
@@ -330,22 +336,27 @@ void RTLSDRGui::on_record_toggled(bool checked)
     m_sampleSource->getInputMessageQueue()->push(message);
 }
 
-void RTLSDRGui::queryDeviceReport()
+void RTLSDRGui::on_transverter_clicked()
 {
-    RTLSDRInput::MsgQueryRTLSDR* message = RTLSDRInput::MsgQueryRTLSDR::create();
-    m_sampleSource->getInputMessageQueue()->push(message);
+    m_settings.m_transverterMode = ui->transverter->getDeltaFrequencyAcive();
+    m_settings.m_transverterDeltaFrequency = ui->transverter->getDeltaFrequency();
+    qDebug("RTLSDRGui::on_transverter_clicked: %lld Hz %s", m_settings.m_transverterDeltaFrequency, m_settings.m_transverterMode ? "on" : "off");
+    updateFrequencyLimits();
+    m_settings.m_centerFrequency = ui->centerFrequency->getValueNew()*1000;
+    sendSettings();
 }
 
 void RTLSDRGui::updateHardware()
 {
-	RTLSDRInput::MsgConfigureRTLSDR* message = RTLSDRInput::MsgConfigureRTLSDR::create(m_settings);
+	RTLSDRInput::MsgConfigureRTLSDR* message = RTLSDRInput::MsgConfigureRTLSDR::create(m_settings, m_forceSettings);
 	m_sampleSource->getInputMessageQueue()->push(message);
+	m_forceSettings = false;
 	m_updateTimer.stop();
 }
 
 void RTLSDRGui::updateStatus()
 {
-    int state = m_deviceAPI->state();
+    int state = m_deviceUISet->m_deviceSourceAPI->state();
 
     if(m_lastEngineState != state)
     {
@@ -362,7 +373,7 @@ void RTLSDRGui::updateStatus()
                 break;
             case DSPDeviceSourceEngine::StError:
                 ui->startStop->setStyleSheet("QToolButton { background-color : red; }");
-                QMessageBox::information(this, tr("Message"), m_deviceAPI->errorMessage());
+                QMessageBox::information(this, tr("Message"), m_deviceUISet->m_deviceSourceAPI->errorMessage());
                 break;
             default:
                 break;
@@ -376,18 +387,17 @@ void RTLSDRGui::on_checkBox_stateChanged(int state)
 {
 	if (state == Qt::Checked)
 	{
-		// Direct Modes: 0: off, 1: I, 2: Q, 3: NoMod.
-		((RTLSDRInput*)m_sampleSource)->set_ds_mode(3);
 		ui->gain->setEnabled(false);
-		ui->centerFrequency->setValueRange(7, 1000U, 275000U);
+        m_settings.m_noModMode = true;
+	    updateFrequencyLimits();
 		ui->centerFrequency->setValue(7000);
 		m_settings.m_centerFrequency = 7000 * 1000;
 	}
 	else
 	{
-		((RTLSDRInput*)m_sampleSource)->set_ds_mode(0);
 		ui->gain->setEnabled(true);
-		ui->centerFrequency->setValueRange(7, 28500U, 1700000U);
+        m_settings.m_noModMode = false;
+	    updateFrequencyLimits();
 		ui->centerFrequency->setValue(434000);
 		ui->gain->setValue(0);
 		m_settings.m_centerFrequency = 435000 * 1000;
@@ -411,9 +421,9 @@ void RTLSDRGui::on_sampleRate_changed(quint64 value)
 void RTLSDRGui::on_lowSampleRate_toggled(bool checked)
 {
     if (checked) {
-        ui->sampleRate->setValueRange(7, 230000U, 300000U);
+        ui->sampleRate->setValueRange(7, RTLSDRInput::sampleRateLowRangeMin, RTLSDRInput::sampleRateLowRangeMax);
     } else {
-        ui->sampleRate->setValueRange(7, 950000U, 2400000U);
+        ui->sampleRate->setValueRange(7, RTLSDRInput::sampleRateHighRangeMin, RTLSDRInput::sampleRateHighRangeMax);
     }
 
     m_settings.m_devSampleRate = ui->sampleRate->getValueNew();

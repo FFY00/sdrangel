@@ -21,42 +21,26 @@
 #include <QDebug>
 
 #include "device/devicesinkapi.h"
-#include "dsp/upchannelizer.h"
-
-#include "dsp/threadedbasebandsamplesource.h"
-#include "ui_nfmmodgui.h"
+#include "device/deviceuiset.h"
 #include "plugin/pluginapi.h"
 #include "util/simpleserializer.h"
 #include "util/db.h"
-#include "gui/basicchannelsettingswidget.h"
 #include "dsp/dspengine.h"
 #include "mainwindow.h"
+
+#include "ui_nfmmodgui.h"
 #include "nfmmodgui.h"
 
-const QString NFMModGUI::m_channelID = "sdrangel.channeltx.modnfm";
 
-const int NFMModGUI::m_rfBW[] = {
-	3000, 4000, 5000, 6250, 8330, 10000, 12500, 15000, 20000, 25000, 40000
-};
-const int NFMModGUI::m_nbRfBW = 11;
-
-const float NFMModGUI::m_ctcssTones[] = {
-         67.0,  71.9,  74.4,  77.0,  79.7,  82.5,  85.4,  88.5,  91.5,  94.8,
-         97.4, 100.0, 103.5, 107.2, 110.9, 114.8, 118.8, 123.0, 127.3, 131.8,
-        136.5, 141.3, 146.2, 151.4, 156.7, 162.2, 167.9, 173.8, 179.9, 186.2,
-        192.8, 203.5
-};
-const int NFMModGUI::m_nbCTCSSTones = 32;
-
-
-NFMModGUI* NFMModGUI::create(PluginAPI* pluginAPI, DeviceSinkAPI *deviceAPI)
+NFMModGUI* NFMModGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx)
 {
-    NFMModGUI* gui = new NFMModGUI(pluginAPI, deviceAPI);
+    NFMModGUI* gui = new NFMModGUI(pluginAPI, deviceUISet, channelTx);
 	return gui;
 }
 
 void NFMModGUI::destroy()
 {
+    delete this;
 }
 
 void NFMModGUI::setName(const QString& name)
@@ -81,94 +65,26 @@ void NFMModGUI::setCenterFrequency(qint64 centerFrequency)
 
 void NFMModGUI::resetToDefaults()
 {
-	blockApplySettings(true);
-
-	ui->rfBW->setCurrentIndex(6);
-	ui->afBW->setValue(3);
-	ui->fmDev->setValue(50);
-	ui->toneFrequency->setValue(100);
-	ui->volume->setValue(10);
-	ui->deltaFrequency->setValue(0);
-	ui->ctcssOn->setChecked(false);
-	ui->ctcss->setCurrentIndex(0);
-
-	blockApplySettings(false);
-	applySettings();
+    m_settings.resetToDefaults();
+    displaySettings();
+    applySettings(true);
 }
 
 QByteArray NFMModGUI::serialize() const
 {
-	SimpleSerializer s(1);
-	s.writeS32(1, m_channelMarker.getCenterFrequency());
-	s.writeS32(2, ui->rfBW->currentIndex());
-	s.writeS32(3, ui->afBW->value());
-	s.writeS32(4, ui->fmDev->value());
-	s.writeU32(5, m_channelMarker.getColor().rgb());
-	s.writeS32(6, ui->toneFrequency->value());
-	s.writeS32(7, ui->volume->value());
-    s.writeBlob(8, ui->cwKeyerGUI->serialize());
-    s.writeBool(9, ui->ctcssOn->isChecked());
-	s.writeS32(10, ui->ctcss->currentIndex());
-	return s.final();
+    return m_settings.serialize();
 }
 
 bool NFMModGUI::deserialize(const QByteArray& data)
 {
-	SimpleDeserializer d(data);
-
-	if(!d.isValid())
-    {
-		resetToDefaults();
-		return false;
-	}
-
-	if(d.getVersion() == 1)
-    {
-		QByteArray bytetmp;
-		quint32 u32tmp;
-		qint32 tmp;
-		bool booltmp;
-
-		blockApplySettings(true);
-		m_channelMarker.blockSignals(true);
-
-		d.readS32(1, &tmp, 0);
-		m_channelMarker.setCenterFrequency(tmp);
-		d.readS32(2, &tmp, 6);
-		ui->rfBW->setCurrentIndex(tmp);
-		d.readS32(3, &tmp, 3);
-		ui->afBW->setValue(tmp);
-		d.readS32(4, &tmp, 50);
-		ui->fmDev->setValue(tmp);
-
-        if(d.readU32(5, &u32tmp))
-        {
-			m_channelMarker.setColor(u32tmp);
-        }
-
-        d.readS32(6, &tmp, 100);
-        ui->toneFrequency->setValue(tmp);
-        d.readS32(7, &tmp, 10);
-        ui->volume->setValue(tmp);
-        d.readBlob(8, &bytetmp);
-        ui->cwKeyerGUI->deserialize(bytetmp);
-
-        d.readBool(9, &booltmp, false);
-        ui->ctcssOn->setChecked(booltmp);
-        d.readS32(10, &tmp, 0);
-		ui->ctcss->setCurrentIndex(tmp);
-
-        blockApplySettings(false);
-		m_channelMarker.blockSignals(false);
-
-		applySettings();
-		return true;
-	}
-    else
-    {
-		resetToDefaults();
-		return false;
-	}
+    if(m_settings.deserialize(data)) {
+        displaySettings();
+        applySettings(true);
+        return true;
+    } else {
+        resetToDefaults();
+        return false;
+    }
 }
 
 bool NFMModGUI::handleMessage(const Message& message)
@@ -193,8 +109,10 @@ bool NFMModGUI::handleMessage(const Message& message)
     }
 }
 
-void NFMModGUI::viewChanged()
+void NFMModGUI::channelMarkerChangedByCursor()
 {
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
 	applySettings();
 }
 
@@ -202,7 +120,7 @@ void NFMModGUI::handleSourceMessages()
 {
     Message* message;
 
-    while ((message = m_nfmMod->getOutputMessageQueue()->pop()) != 0)
+    while ((message = getInputMessageQueue()->pop()) != 0)
     {
         if (handleMessage(*message))
         {
@@ -214,45 +132,54 @@ void NFMModGUI::handleSourceMessages()
 void NFMModGUI::on_deltaFrequency_changed(qint64 value)
 {
     m_channelMarker.setCenterFrequency(value);
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    applySettings();
 }
 
 void NFMModGUI::on_rfBW_currentIndexChanged(int index)
 {
-	m_channelMarker.setBandwidth(m_rfBW[index]);
+	m_channelMarker.setBandwidth(NFMModSettings::getRFBW(index));
+	m_settings.m_rfBandwidth = NFMModSettings::getRFBW(index);
 	applySettings();
 }
 
 void NFMModGUI::on_afBW_valueChanged(int value)
 {
 	ui->afBWText->setText(QString("%1k").arg(value));
+	m_settings.m_afBandwidth = value * 1000.0;
 	applySettings();
 }
 
 void NFMModGUI::on_fmDev_valueChanged(int value)
 {
 	ui->fmDevText->setText(QString("%1k").arg(value / 10.0, 0, 'f', 1));
+	m_settings.m_fmDeviation = value * 100.0;
 	applySettings();
 }
 
 void NFMModGUI::on_volume_valueChanged(int value)
 {
 	ui->volumeText->setText(QString("%1").arg(value / 10.0, 0, 'f', 1));
+	m_settings.m_volumeFactor = value / 10.0;
 	applySettings();
 }
 
 void NFMModGUI::on_toneFrequency_valueChanged(int value)
 {
     ui->toneFrequencyText->setText(QString("%1k").arg(value / 100.0, 0, 'f', 2));
+    m_settings.m_toneFrequency = value * 10.0;
     applySettings();
 }
 
-void NFMModGUI::on_channelMute_toggled(bool checked __attribute__((unused)))
+void NFMModGUI::on_channelMute_toggled(bool checked)
 {
+    m_settings.m_channelMute = checked;
 	applySettings();
 }
 
-void NFMModGUI::on_playLoop_toggled(bool checked __attribute__((unused)))
+void NFMModGUI::on_playLoop_toggled(bool checked)
 {
+    m_settings.m_playLoop = checked;
 	applySettings();
 }
 
@@ -325,13 +252,15 @@ void NFMModGUI::on_showFileDialog_clicked(bool checked __attribute__((unused)))
     }
 }
 
-void NFMModGUI::on_ctcss_currentIndexChanged(int index __attribute__((unused)))
+void NFMModGUI::on_ctcss_currentIndexChanged(int index)
 {
+    m_settings.m_ctcssIndex = index;
     applySettings();
 }
 
-void NFMModGUI::on_ctcssOn_toggled(bool checked __attribute__((unused)))
+void NFMModGUI::on_ctcssOn_toggled(bool checked)
 {
+    m_settings.m_ctcssOn = checked;
     applySettings();
 }
 
@@ -347,22 +276,12 @@ void NFMModGUI::onWidgetRolled(QWidget* widget __attribute__((unused)), bool rol
 {
 }
 
-void NFMModGUI::onMenuDoubleClicked()
-{
-	if(!m_basicSettingsShown) {
-		m_basicSettingsShown = true;
-		BasicChannelSettingsWidget* bcsw = new BasicChannelSettingsWidget(&m_channelMarker, this);
-		bcsw->show();
-	}
-}
-
-NFMModGUI::NFMModGUI(PluginAPI* pluginAPI, DeviceSinkAPI *deviceAPI, QWidget* parent) :
+NFMModGUI::NFMModGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx, QWidget* parent) :
 	RollupWidget(parent),
 	ui(new Ui::NFMModGUI),
 	m_pluginAPI(pluginAPI),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
 	m_channelMarker(this),
-	m_basicSettingsShown(false),
 	m_doApplySettings(true),
 	m_channelPowerDbAvg(20,0),
     m_recordLength(0),
@@ -376,67 +295,68 @@ NFMModGUI::NFMModGUI(PluginAPI* pluginAPI, DeviceSinkAPI *deviceAPI, QWidget* pa
 	setAttribute(Qt::WA_DeleteOnClose, true);
 
     blockApplySettings(true);
+
     ui->rfBW->clear();
-    for (int i = 0; i < m_nbRfBW; i++) {
-        ui->rfBW->addItem(QString("%1").arg(m_rfBW[i] / 1000.0, 0, 'f', 2));
+    for (int i = 0; i < NFMModSettings::m_nbRfBW; i++) {
+        ui->rfBW->addItem(QString("%1").arg(NFMModSettings::getRFBW(i) / 1000.0, 0, 'f', 2));
     }
     ui->rfBW->setCurrentIndex(6);
+
     blockApplySettings(false);
 
-
 	connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
-	connect(this, SIGNAL(menuDoubleClickEvent()), this, SLOT(onMenuDoubleClicked()));
 
-	m_nfmMod = new NFMMod();
-	m_channelizer = new UpChannelizer(m_nfmMod);
-	m_threadedChannelizer = new ThreadedBasebandSampleSource(m_channelizer, this);
-	//m_pluginAPI->addThreadedSink(m_threadedChannelizer);
-    m_deviceAPI->addThreadedSource(m_threadedChannelizer);
+	m_nfmMod = (NFMMod*) channelTx; //new NFMMod(m_deviceUISet->m_deviceSinkAPI);
+	m_nfmMod->setMessageQueueToGUI(getInputMessageQueue());
 
-	connect(&m_pluginAPI->getMainWindow()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
+	connect(&MainWindow::getInstance()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
 
     ui->deltaFrequencyLabel->setText(QString("%1f").arg(QChar(0x94, 0x03)));
     ui->deltaFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
     ui->deltaFrequency->setValueRange(false, 7, -9999999, 9999999);
 
-	//m_channelMarker = new ChannelMarker(this);
-	m_channelMarker.setColor(Qt::red);
-	m_channelMarker.setBandwidth(12500);
-	m_channelMarker.setCenterFrequency(0);
-	m_channelMarker.setVisible(true);
+    m_channelMarker.blockSignals(true);
+    m_channelMarker.setColor(Qt::red);
+    m_channelMarker.setBandwidth(12500);
+    m_channelMarker.setCenterFrequency(0);
+    m_channelMarker.setTitle("NFM Modulator");
+    m_channelMarker.setUDPAddress("127.0.0.1");
+    m_channelMarker.setUDPSendPort(9999);
+    m_channelMarker.blockSignals(false);
+	m_channelMarker.setVisible(true); // activate signal on the last setting only
 
-	connect(&m_channelMarker, SIGNAL(changed()), this, SLOT(viewChanged()));
+	m_deviceUISet->registerTxChannelInstance(NFMMod::m_channelID, this);
+	m_deviceUISet->addChannelMarker(&m_channelMarker);
+	m_deviceUISet->addRollupWidget(this);
 
-	m_deviceAPI->registerChannelInstance(m_channelID, this);
-    m_deviceAPI->addChannelMarker(&m_channelMarker);
-    m_deviceAPI->addRollupWidget(this);
+	connect(&m_channelMarker, SIGNAL(changedByCursor()), this, SLOT(channelMarkerChangedByCursor()));
 
     ui->play->setEnabled(false);
     ui->play->setChecked(false);
     ui->tone->setChecked(false);
     ui->mic->setChecked(false);
 
-    for (int i=0; i<m_nbCTCSSTones; i++)
+    for (int i=0; i< NFMModSettings::m_nbCTCSSFreqs; i++)
     {
-        ui->ctcss->addItem(QString("%1").arg((double) m_ctcssTones[i], 0, 'f', 1));
+        ui->ctcss->addItem(QString("%1").arg((double) NFMModSettings::getCTCSSFreq(i), 0, 'f', 1));
     }
 
     ui->cwKeyerGUI->setBuddies(m_nfmMod->getInputMessageQueue(), m_nfmMod->getCWKeyer());
 
-	applySettings();
-
-	connect(m_nfmMod->getOutputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleSourceMessages()));
+	connect(getInputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleSourceMessages()));
 	connect(m_nfmMod, SIGNAL(levelChanged(qreal, qreal, int)), ui->volumeMeter, SLOT(levelChanged(qreal, qreal, int)));
+
+    m_settings.setChannelMarker(&m_channelMarker);
+    m_settings.setCWKeyerGUI(ui->cwKeyerGUI);
+
+    displaySettings();
+    applySettings();
 }
 
 NFMModGUI::~NFMModGUI()
 {
-    m_deviceAPI->removeChannelInstance(this);
-	m_deviceAPI->removeThreadedSource(m_threadedChannelizer);
-	delete m_threadedChannelizer;
-	delete m_channelizer;
-	delete m_nfmMod;
-	//delete m_channelMarker;
+    m_deviceUISet->removeTxChannelInstance(this);
+	delete m_nfmMod; // TODO: check this: when the GUI closes it has to delete the modulator
 	delete ui;
 }
 
@@ -445,43 +365,66 @@ void NFMModGUI::blockApplySettings(bool block)
     m_doApplySettings = !block;
 }
 
-void NFMModGUI::applySettings()
+void NFMModGUI::applySettings(bool force)
 {
 	if (m_doApplySettings)
 	{
-		setTitleColor(m_channelMarker.getColor());
+		NFMMod::MsgConfigureChannelizer *msgChan = NFMMod::MsgConfigureChannelizer::create(
+		        48000, m_channelMarker.getCenterFrequency());
+		m_nfmMod->getInputMessageQueue()->push(msgChan);
 
-		m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-			48000,
-			m_channelMarker.getCenterFrequency());
-
-		ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
-
-		m_nfmMod->configure(m_nfmMod->getInputMessageQueue(),
-			m_rfBW[ui->rfBW->currentIndex()],
-			ui->afBW->value() * 1000.0,
-			ui->fmDev->value() * 100.0f, // value is in '100 Hz
-			ui->toneFrequency->value() * 10.0f,
-			ui->volume->value() / 10.0f,
-			ui->channelMute->isChecked(),
-			ui->playLoop->isChecked(),
-			ui->ctcssOn->isChecked(),
-			m_ctcssTones[ui->ctcss->currentIndex()]);
+		NFMMod::MsgConfigureNFMMod *msg = NFMMod::MsgConfigureNFMMod::create(m_settings, force);
+		m_nfmMod->getInputMessageQueue()->push(msg);
 	}
 }
 
+void NFMModGUI::displaySettings()
+{
+    m_channelMarker.blockSignals(true);
+    m_channelMarker.setCenterFrequency(m_settings.m_inputFrequencyOffset);
+    m_channelMarker.setBandwidth(m_settings.m_rfBandwidth);
+    m_channelMarker.blockSignals(false);
+    m_channelMarker.setColor(m_settings.m_rgbColor); // activate signal on the last setting only
+
+    setTitleColor(m_settings.m_rgbColor);
+    setWindowTitle(m_channelMarker.getTitle());
+
+    blockApplySettings(true);
+
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+
+    ui->rfBW->setCurrentIndex(NFMModSettings::getRFBWIndex(m_settings.m_rfBandwidth));
+
+    ui->afBWText->setText(QString("%1k").arg(m_settings.m_afBandwidth / 1000.0));
+    ui->afBW->setValue(m_settings.m_afBandwidth / 1000.0);
+
+    ui->fmDevText->setText(QString("%1k").arg(m_settings.m_fmDeviation / 1000.0, 0, 'f', 1));
+    ui->fmDev->setValue(m_settings.m_fmDeviation / 100.0);
+
+    ui->volumeText->setText(QString("%1").arg(m_settings.m_volumeFactor, 0, 'f', 1));
+    ui->volume->setValue(m_settings.m_volumeFactor * 10.0);
+
+    ui->toneFrequencyText->setText(QString("%1k").arg(m_settings.m_toneFrequency / 1000.0, 0, 'f', 2));
+    ui->toneFrequency->setValue(m_settings.m_toneFrequency / 10.0);
+
+    ui->ctcssOn->setChecked(m_settings.m_ctcssOn);
+    ui->ctcss->setCurrentIndex(m_settings.m_ctcssIndex);
+
+    ui->channelMute->setChecked(m_settings.m_channelMute);
+    ui->playLoop->setChecked(m_settings.m_playLoop);
+
+    blockApplySettings(false);
+}
+
+
 void NFMModGUI::leaveEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(false);
-	blockApplySettings(false);
 }
 
 void NFMModGUI::enterEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(true);
-	blockApplySettings(false);
 }
 
 void NFMModGUI::tick()

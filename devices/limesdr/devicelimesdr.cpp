@@ -56,20 +56,41 @@ bool DeviceLimeSDR::setNCOFrequency(lms_device_t *device, bool dir_tx, std::size
             return false;
         }
 
+        if (dir_tx)
+        {
+            if (LMS_WriteParam(device,LMS7param(CMIX_BYP_TXTSP),0) < 0) {
+                fprintf(stderr, "DeviceLimeSDR::setNCOFrequency: cannot enable Tx NCO\n");
+                return false;
+            }
+        }
+        else
+        {
+            if (LMS_WriteParam(device,LMS7param(CMIX_BYP_RXTSP),0) < 0) {
+                fprintf(stderr, "DeviceLimeSDR::setNCOFrequency: cannot enable Rx NCO\n");
+                return false;
+            }
+        }
+
         return true;
     }
     else
     {
-        if (LMS_SetNCOIndex(device, dir_tx, chan, LMS_NCO_VAL_COUNT, true) < 0)
+        if (dir_tx)
         {
-            fprintf(stderr, "DeviceLimeSDR::setNCOFrequency: cannot disable NCO\n");
-            return false;
+            if (LMS_WriteParam(device,LMS7param(CMIX_BYP_TXTSP),1) < 0) {
+                fprintf(stderr, "DeviceLimeSDR::setNCOFrequency: cannot disable Tx NCO\n");
+                return false;
+            }
         }
         else
         {
-            fprintf(stderr, "DeviceLimeSDR::setNCOFrequency: NCO disabled\n");
-            return true;
+            if (LMS_WriteParam(device,LMS7param(CMIX_BYP_RXTSP),1) < 0) {
+                fprintf(stderr, "DeviceLimeSDR::setNCOFrequency: cannot disable Rx NCO\n");
+                return false;
+            }
         }
+
+        return true;
     }
 }
 
@@ -317,6 +338,36 @@ bool DeviceLimeSDR::setTxAntennaPath(lms_device_t *device, std::size_t chan, int
         if (LMS_SetAntenna(device, LMS_CH_TX, chan, 0) < 0)
         {
             fprintf(stderr, "DeviceLimeSDR::setTxAntennaPath: cannot set to none\n");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool DeviceLimeSDR::setClockSource(lms_device_t *device, bool extClock, uint32_t extClockFrequency)
+{
+    if (extClock)
+    {
+        if (LMS_SetClockFreq(device, LMS_CLOCK_EXTREF, (float) extClockFrequency) < 0)
+        {
+            fprintf(stderr, "DeviceLimeSDR::setClockSource: cannot set to external\n");
+            return false;
+        }
+    }
+    else
+    {
+        uint16_t vcoTrimValue;
+
+        if (LMS_VCTCXORead(device, &vcoTrimValue))
+        {
+            fprintf(stderr, "DeviceLimeSDR::setClockSource: cannot read VCTXO trim value\n");
+            return false;
+        }
+
+        if (LMS_VCTCXOWrite(device, vcoTrimValue))
+        {
+            fprintf(stderr, "DeviceLimeSDR::setClockSource: cannot write VCTXO trim value\n");
             return false;
         }
     }

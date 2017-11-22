@@ -13,8 +13,9 @@
 #include "httpconnectionhandler.h"
 #include "httpconnectionhandlerpool.h"
 #include "httprequesthandler.h"
+#include "httplistenersettings.h"
 
-namespace stefanfrings {
+namespace qtwebapp {
 
 /**
   Listens for incoming TCP connections and and passes all incoming HTTP requests to your implementation of HttpRequestHandler,
@@ -56,6 +57,16 @@ public:
     */
     HttpListener(QSettings* settings, HttpRequestHandler* requestHandler, QObject* parent = NULL);
 
+    /**
+      Constructor.
+      Creates a connection pool and starts listening on the configured host and port.
+      @param settings Configuration settings for the HTTP server as a structure.
+      @param requestHandler Processes each received HTTP request, usually by dispatching to controller classes.
+      @param parent Parent object.
+      @warning Ensure to close or delete the listener before deleting the request handler.
+    */
+    HttpListener(const HttpListenerSettings& settings, HttpRequestHandler* requestHandler, QObject* parent = NULL);
+
     /** Destructor */
     virtual ~HttpListener();
 
@@ -70,6 +81,18 @@ public:
     */
     void close();
 
+    /**
+     * Get a listener settings copy
+     * @return The current listener settings
+     */
+    HttpListenerSettings getListenerSettings() const { return listenerSettings; }
+
+    /**
+     * Set new listener settings data
+     * @param Listener settings to replace current data
+     */
+    void setListenerSettings(const HttpListenerSettings& settings) { listenerSettings = settings; }
+
 protected:
 
     /** Serves new incoming connection requests */
@@ -80,11 +103,17 @@ private:
     /** Configuration settings for the HTTP server */
     QSettings* settings;
 
+    /** Configuration settings for the HTTP server as a structure */
+    HttpListenerSettings listenerSettings;
+
     /** Point to the reuqest handler which processes all HTTP requests */
     HttpRequestHandler* requestHandler;
 
     /** Pool of connection handlers */
     HttpConnectionHandlerPool* pool;
+
+    /** Settings flag */
+    bool useQtSettings;
 
 signals:
 

@@ -17,25 +17,27 @@
 #ifndef PLUGINS_SAMPLESOURCE_LIMESDRINPUT_LIMESDRINPUTGUI_H_
 #define PLUGINS_SAMPLESOURCE_LIMESDRINPUT_LIMESDRINPUTGUI_H_
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QWidget>
 
+#include "util/messagequeue.h"
+
 #include "limesdrinput.h"
 
-class DeviceSourceAPI;
+class DeviceUISet;
 
 namespace Ui {
     class LimeSDRInputGUI;
 }
 
-class LimeSDRInputGUI : public QWidget, public PluginInstanceUI {
+class LimeSDRInputGUI : public QWidget, public PluginInstanceGUI {
     Q_OBJECT
 
 public:
-    explicit LimeSDRInputGUI(DeviceSourceAPI *deviceAPI, QWidget* parent = 0);
+    explicit LimeSDRInputGUI(DeviceUISet *deviceUISet, QWidget* parent = 0);
     virtual ~LimeSDRInputGUI();
-    void destroy();
+    virtual void destroy();
 
     void setName(const QString& name);
     QString getName() const;
@@ -45,23 +47,25 @@ public:
     virtual void setCenterFrequency(qint64 centerFrequency);
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
+    virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
     virtual bool handleMessage(const Message& message);
 
 private:
     Ui::LimeSDRInputGUI* ui;
 
-    DeviceSourceAPI* m_deviceAPI;
+    DeviceUISet* m_deviceUISet;
     LimeSDRInput* m_limeSDRInput; //!< Same object as above but gives easy access to LimeSDRInput methods and attributes that are used intensively
     LimeSDRInputSettings m_settings;
     QTimer m_updateTimer;
     QTimer m_statusTimer;
-    DeviceSampleSource* m_sampleSource;
     int m_sampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
     int m_lastEngineState;
     bool m_doApplySettings;
+    bool m_forceSettings;
     int m_statusCounter;
     int m_deviceStatusCounter;
+    MessageQueue m_inputMessageQueue;
 
     void displaySettings();
     void setNCODisplay();
@@ -71,8 +75,7 @@ private:
     void blockApplySettings(bool block);
 
 private slots:
-    void handleMessagesToGUI();
-
+    void handleInputMessages();
     void on_startStop_toggled(bool checked);
     void on_record_toggled(bool checked);
     void on_centerFrequency_changed(quint64 value);
@@ -93,6 +96,7 @@ private slots:
     void on_tiaGain_currentIndexChanged(int index);
     void on_pgaGain_valueChanged(int value);
     void on_antenna_currentIndexChanged(int index);
+    void on_extClock_clicked();
 
     void updateHardware();
     void updateStatus();

@@ -25,6 +25,7 @@
 #include <fstream>
 
 class FileSourceThread;
+class DeviceSourceAPI;
 
 class FileSourceInput : public DeviceSampleSource {
 public:
@@ -209,8 +210,9 @@ public:
 		{ }
 	};
 
-	FileSourceInput(const QTimer& masterTimer);
+	FileSourceInput(DeviceSourceAPI *deviceAPI);
 	virtual ~FileSourceInput();
+	virtual void destroy();
 
 	virtual bool start();
 	virtual void stop();
@@ -223,6 +225,7 @@ public:
 	virtual bool handleMessage(const Message& message);
 
 private:
+	DeviceSourceAPI *m_deviceAPI;
 	QMutex m_mutex;
 	Settings m_settings;
 	std::ifstream m_ifstream;

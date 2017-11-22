@@ -20,7 +20,8 @@
 #include <QObject>
 #include "plugin/plugininterface.h"
 
-class DeviceSinkAPI;
+class DeviceUISet;
+class BasebandSampleSource;
 
 class SSBModPlugin : public QObject, PluginInterface {
 	Q_OBJECT
@@ -28,20 +29,18 @@ class SSBModPlugin : public QObject, PluginInterface {
 	Q_PLUGIN_METADATA(IID "sdrangel.channeltx.ssbmod")
 
 public:
-	explicit SSBModPlugin(QObject* parent = NULL);
+	explicit SSBModPlugin(QObject* parent = 0);
 
 	const PluginDescriptor& getPluginDescriptor() const;
 	void initPlugin(PluginAPI* pluginAPI);
 
-	PluginInstanceUI* createTxChannel(const QString& channelName, DeviceSinkAPI *deviceAPI);
+	PluginInstanceGUI* createTxChannelGUI(const QString& channelName, DeviceUISet *deviceUISet, BasebandSampleSource *txChannel);
+    BasebandSampleSource* createTxChannel(const QString& channelName, DeviceSinkAPI *deviceAPI);
 
 private:
 	static const PluginDescriptor m_pluginDescriptor;
 
 	PluginAPI* m_pluginAPI;
-
-private slots:
-	void createInstanceModSSB(DeviceSinkAPI *deviceAPI);
 };
 
 #endif // INCLUDE_SSBMODPLUGIN_H

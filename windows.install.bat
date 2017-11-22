@@ -1,20 +1,30 @@
 SET libusbdir="D:\softs\libusb-1.0.20\MinGW32"
 SET opencvdir="D:\softs\opencv\build\mw32\install\x86\mingw\bin"
+SET libxml2dir="D:\softs\libxml2-2.7.8.win32"
+SET libiconvdir="D:\softs\iconv-1.9.2.win32"
+SET libzlib1dir="D:\softs\zlib-1.2.5"
 
 copy app\%1\sdrangel.exe %2
 copy sdrbase\%1\sdrbase.dll %2
+copy sdrgui\%1\sdrgui.dll %2
 copy devices\%1\devices.dll %2
 copy mbelib\%1\mbelib.dll %2
 copy dsdcc\%1\dsdcc.dll %2
 copy serialdv\%1\serialdv.dll %2
 copy httpserver\%1\httpserver.dll %2
+copy swagger\%1\swagger.dll %2
+copy logging\%1\logging.dll %2
 copy libhackrf\%1\libhackrf.dll %2
 copy librtlsdr\%1\librtlsdr.dll %2
 copy libairspy\%1\libairspy.dll %2
 copy libbladerf\%1\libbladerf.dll %2
 copy libsqlite3\%1\libsqlite3.dll %2
 copy liblimesuite\%1\liblimesuite.dll %2
+copy libiio\%1\libiio.dll %2
 copy %libusbdir%\dll\libusb-1.0.dll %2
+copy %libxml2dir%\bin\libxml2.dll %2
+copy %libiconvdir%\bin\iconv.dll %2
+copy %libzlib1dir%\bin\zlib1.dll %2
 copy %opencvdir%\opencv_ffmpeg2413.dll %2
 copy %opencvdir%\libopencv_imgproc2413.dll %2
 copy %opencvdir%\libopencv_highgui2413.dll %2
@@ -48,6 +58,7 @@ copy plugins\samplesource\hackrfinput\%1\inputhackrf.dll %2\plugins\samplesource
 copy plugins\samplesource\airspy\%1\inputairspy.dll %2\plugins\samplesource
 copy plugins\samplesource\bladerfinput\%1\inputbladerf.dll %2\plugins\samplesource
 copy plugins\samplesource\limesdrinput\%1\inputlimesdr.dll %2\plugins\samplesource
+copy plugins\samplesource\plutosdrinput\%1\inputplutosdr.dll %2\plugins\samplesource
 copy plugins\samplesink\filesink\%1\outputfilesink.dll %2\plugins\samplesink
 copy plugins\samplesink\bladerfoutput\%1\outputbladerf.dll %2\plugins\samplesink
 copy plugins\samplesink\hackrfoutput\%1\outputhackrf.dll %2\plugins\samplesink

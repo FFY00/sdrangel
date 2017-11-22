@@ -1,12 +1,11 @@
 #include "nfmdemodgui.h"
 
 #include <device/devicesourceapi.h>
-#include <dsp/downchannelizer.h>
+#include "device/deviceuiset.h"
 #include <QDockWidget>
 #include <QMainWindow>
 #include <QDebug>
 
-#include "dsp/threadedbasebandsamplesink.h"
 #include "ui_nfmdemodgui.h"
 #include "dsp/nullsink.h"
 #include "plugin/pluginapi.h"
@@ -17,19 +16,9 @@
 #include "mainwindow.h"
 #include "nfmdemod.h"
 
-const QString NFMDemodGUI::m_channelID = "de.maintech.sdrangelove.channel.nfm";
-
-const int NFMDemodGUI::m_rfBW[] = {
-	5000, 6250, 8330, 10000, 12500, 15000, 20000, 25000, 40000
-};
-const int NFMDemodGUI::m_fmDev[] = { // corresponding FM deviations
-    1000, 1500, 2000, 2000,  2000,  2500,  3000,  3500,  5000
-};
-const int NFMDemodGUI::m_nbRfBW = 9;
-
-NFMDemodGUI* NFMDemodGUI::create(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI)
+NFMDemodGUI* NFMDemodGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
 {
-	NFMDemodGUI* gui = new NFMDemodGUI(pluginAPI, deviceAPI);
+	NFMDemodGUI* gui = new NFMDemodGUI(pluginAPI, deviceUISet, rxChannel);
 	return gui;
 }
 
@@ -61,151 +50,107 @@ void NFMDemodGUI::setCenterFrequency(qint64 centerFrequency)
 
 void NFMDemodGUI::resetToDefaults()
 {
-	blockApplySettings(true);
-
-	ui->rfBW->setCurrentIndex(4);
-	ui->afBW->setValue(3);
-	ui->volume->setValue(20);
-	ui->squelchGate->setValue(5);
-	ui->squelch->setValue(-40);
-	ui->deltaFrequency->setValue(0);
-	ui->ctcssOn->setChecked(false);
-	ui->audioMute->setChecked(false);
-
-	blockApplySettings(false);
-	applySettings();
+    m_settings.resetToDefaults();
+    displaySettings();
+    applySettings();
 }
 
 QByteArray NFMDemodGUI::serialize() const
 {
-	SimpleSerializer s(1);
-	s.writeS32(1, m_channelMarker.getCenterFrequency());
-	s.writeS32(2, ui->rfBW->currentIndex());
-	s.writeS32(3, ui->afBW->value());
-	s.writeS32(4, ui->volume->value());
-	s.writeS32(5, ui->squelch->value());
-	s.writeU32(7, m_channelMarker.getColor().rgb());
-	s.writeS32(8, ui->ctcss->currentIndex());
-	s.writeBool(9, ui->ctcssOn->isChecked());
-	s.writeBool(10, ui->audioMute->isChecked());
-	s.writeS32(11, ui->squelchGate->value());
-	s.writeBool(12, ui->deltaSquelch->isChecked());
-	s.writeBlob(13, m_channelMarker.serialize());
-	return s.final();
+    return m_settings.serialize();
 }
 
 bool NFMDemodGUI::deserialize(const QByteArray& data)
 {
-	SimpleDeserializer d(data);
-
-	if (!d.isValid())
-	{
-		resetToDefaults();
-		return false;
-	}
-
-	if (d.getVersion() == 1)
-	{
-		QByteArray bytetmp;
-		quint32 u32tmp;
-		qint32 tmp;
-		bool boolTmp;
-
-		blockApplySettings(true);
-		m_channelMarker.blockSignals(true);
-
-        d.readBlob(13, &bytetmp);
-        m_channelMarker.deserialize(bytetmp);
-
-		d.readS32(1, &tmp, 0);
-		m_channelMarker.setCenterFrequency(tmp);
-		d.readS32(2, &tmp, 4);
-		ui->rfBW->setCurrentIndex(tmp);
-		d.readS32(3, &tmp, 3);
-		ui->afBW->setValue(tmp);
-		d.readS32(4, &tmp, 20);
-		ui->volume->setValue(tmp);
-		d.readS32(5, &tmp, -40);
-		ui->squelch->setValue(tmp);
-
-		if(d.readU32(7, &u32tmp))
-		{
-			m_channelMarker.setColor(u32tmp);
-		}
-
-		d.readS32(8, &tmp, 0);
-		ui->ctcss->setCurrentIndex(tmp);
-		d.readBool(9, &boolTmp, false);
-		ui->ctcssOn->setChecked(boolTmp);
-		d.readBool(10, &boolTmp, false);
-		ui->audioMute->setChecked(boolTmp);
-		d.readS32(11, &tmp, 5);
-		ui->squelchGate->setValue(tmp);
-        d.readBool(12, &boolTmp, false);
-        ui->deltaSquelch->setChecked(boolTmp);
-
-        this->setWindowTitle(m_channelMarker.getTitle());
-        displayUDPAddress();
-
-		blockApplySettings(false);
-		m_channelMarker.blockSignals(false);
-
-		applySettings(true);
-		return true;
-	}
-	else
-	{
-		resetToDefaults();
-		return false;
-	}
+    if(m_settings.deserialize(data)) {
+        displaySettings();
+        applySettings(true);
+        return true;
+    } else {
+        resetToDefaults();
+        return false;
+    }
 }
 
 bool NFMDemodGUI::handleMessage(const Message& message __attribute__((unused)))
 {
-	return false;
+    if (NFMDemod::MsgReportCTCSSFreq::match(message))
+    {
+        NFMDemod::MsgReportCTCSSFreq& report = (NFMDemod::MsgReportCTCSSFreq&) message;
+        setCtcssFreq(report.getFrequency());
+        //qDebug("NFMDemodGUI::handleMessage: MsgReportCTCSSFreq: %f", report.getFrequency());
+        return true;
+    }
+
+    return false;
 }
 
-void NFMDemodGUI::channelMarkerChanged()
+void NFMDemodGUI::handleInputMessages()
 {
-    this->setWindowTitle(m_channelMarker.getTitle());
-    displayUDPAddress();
+    Message* message;
+
+    while ((message = getInputMessageQueue()->pop()) != 0)
+    {
+        if (handleMessage(*message))
+        {
+            delete message;
+        }
+    }
+}
+
+void NFMDemodGUI::channelMarkerChangedByCursor()
+{
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
     applySettings();
+}
+
+void NFMDemodGUI::channelMarkerHighlightedByCursor()
+{
+    setHighlighted(m_channelMarker.getHighlighted());
 }
 
 void NFMDemodGUI::on_deltaFrequency_changed(qint64 value)
 {
     m_channelMarker.setCenterFrequency(value);
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    applySettings();
 }
 
 void NFMDemodGUI::on_rfBW_currentIndexChanged(int index)
 {
 	qDebug() << "NFMDemodGUI::on_rfBW_currentIndexChanged" << index;
 	//ui->rfBWText->setText(QString("%1 k").arg(m_rfBW[value] / 1000.0));
-	m_channelMarker.setBandwidth(m_rfBW[index]);
+	m_channelMarker.setBandwidth(NFMDemodSettings::getRFBW(index));
+	m_settings.m_rfBandwidth = NFMDemodSettings::getRFBW(index);
+	m_settings.m_fmDeviation = NFMDemodSettings::getFMDev(index);
 	applySettings();
 }
 
 void NFMDemodGUI::on_afBW_valueChanged(int value)
 {
 	ui->afBWText->setText(QString("%1 k").arg(value));
+	m_settings.m_afBandwidth = value * 1000.0;
 	applySettings();
 }
 
 void NFMDemodGUI::on_volume_valueChanged(int value)
 {
 	ui->volumeText->setText(QString("%1").arg(value / 10.0, 0, 'f', 1));
+	m_settings.m_volume = value / 10.0;
 	applySettings();
 }
 
-void NFMDemodGUI::on_squelchGate_valueChanged(int value __attribute__((unused)))
+void NFMDemodGUI::on_squelchGate_valueChanged(int value)
 {
-    ui->squelchGateText->setText(QString("%1").arg(ui->squelchGate->value() * 10.0f, 0, 'f', 0));
+    ui->squelchGateText->setText(QString("%1").arg(value * 10.0f, 0, 'f', 0));
+    m_settings.m_squelchGate = value;
 	applySettings();
 }
 
-void NFMDemodGUI::on_deltaSquelch_toggled(bool checked __attribute__((unused)))
+void NFMDemodGUI::on_deltaSquelch_toggled(bool checked)
 {
-    if (ui->deltaSquelch->isChecked())
+    if (checked)
     {
         ui->squelchText->setText(QString("%1").arg((-ui->squelch->value()) / 10.0, 0, 'f', 1));
         ui->squelchText->setToolTip(tr("Squelch AF balance threshold (%)"));
@@ -217,6 +162,7 @@ void NFMDemodGUI::on_deltaSquelch_toggled(bool checked __attribute__((unused)))
         ui->squelchText->setToolTip(tr("Squelch power threshold (dB)"));
         ui->squelch->setToolTip(tr("Squelch AF balance threshold (%)"));
     }
+    m_settings.m_deltaSquelch = checked;
     applySettings();
 }
 
@@ -232,32 +178,32 @@ void NFMDemodGUI::on_squelch_valueChanged(int value)
         ui->squelchText->setText(QString("%1").arg(value / 10.0, 0, 'f', 1));
         ui->squelchText->setToolTip(tr("Squelch power threshold (dB)"));
     }
+    m_settings.m_squelch = value * 1.0;
 	applySettings();
 }
 
 void NFMDemodGUI::on_ctcssOn_toggled(bool checked)
 {
-	m_ctcssOn = checked;
+	m_settings.m_ctcssOn = checked;
 	applySettings();
 }
 
 void NFMDemodGUI::on_audioMute_toggled(bool checked)
 {
-	m_audioMute = checked;
+	m_settings.m_audioMute = checked;
 	applySettings();
 }
 
-void NFMDemodGUI::on_copyAudioToUDP_toggled(bool checked __attribute__((unused)))
+void NFMDemodGUI::on_copyAudioToUDP_toggled(bool checked)
 {
+    m_settings.m_copyAudioToUDP = checked;
     applySettings();
 }
 
 void NFMDemodGUI::on_ctcss_currentIndexChanged(int index)
 {
-	if (m_nfmDemod != 0)
-	{
-		m_nfmDemod->setSelectedCtcssIndex(index);
-	}
+	m_settings.m_ctcssIndex = index;
+	applySettings();
 }
 
 void NFMDemodGUI::onWidgetRolled(QWidget* widget __attribute__((unused)), bool rollDown __attribute__((unused)))
@@ -273,13 +219,25 @@ void NFMDemodGUI::onMenuDialogCalled(const QPoint &p)
     BasicChannelSettingsDialog dialog(&m_channelMarker, this);
     dialog.move(p);
     dialog.exec();
+
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    m_settings.m_udpAddress = m_channelMarker.getUDPAddress(),
+    m_settings.m_udpPort =  m_channelMarker.getUDPSendPort(),
+    m_settings.m_rgbColor = m_channelMarker.getColor().rgb();
+    m_settings.m_title = m_channelMarker.getTitle();
+
+    setWindowTitle(m_settings.m_title);
+    setTitleColor(m_settings.m_rgbColor);
+    displayUDPAddress();
+
+    applySettings();
 }
 
-NFMDemodGUI::NFMDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidget* parent) :
+NFMDemodGUI::NFMDemodGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel, QWidget* parent) :
 	RollupWidget(parent),
 	ui(new Ui::NFMDemodGUI),
 	m_pluginAPI(pluginAPI),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
 	m_channelMarker(this),
 	m_basicSettingsShown(false),
 	m_doApplySettings(true),
@@ -289,30 +247,33 @@ NFMDemodGUI::NFMDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidg
 	ui->setupUi(this);
 	setAttribute(Qt::WA_DeleteOnClose, true);
 
-	blockApplySettings(true);
-	ui->rfBW->clear();
-	for (int i = 0; i < m_nbRfBW; i++) {
-		ui->rfBW->addItem(QString("%1").arg(m_rfBW[i] / 1000.0, 0, 'f', 2));
-	}
-	blockApplySettings(false);
-
 	connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
     connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(onMenuDialogCalled(const QPoint &)));
 
-	m_nfmDemod = new NFMDemod();
-	m_nfmDemod->registerGUI(this);
+	m_nfmDemod = (NFMDemod*) rxChannel; //new NFMDemod(m_deviceUISet->m_deviceSourceAPI);
+	m_nfmDemod->setMessageQueueToGUI(getInputMessageQueue());
 
-	connect(&m_pluginAPI->getMainWindow()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
+	connect(&MainWindow::getInstance()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
 
-	int ctcss_nbTones;
-	const Real *ctcss_tones = m_nfmDemod->getCtcssToneSet(ctcss_nbTones);
+    blockApplySettings(true);
 
-	ui->ctcss->addItem("--");
+    ui->rfBW->clear();
 
-	for (int i=0; i<ctcss_nbTones; i++)
-	{
-		ui->ctcss->addItem(QString("%1").arg(ctcss_tones[i]));
-	}
+    for (int i = 0; i < NFMDemodSettings::m_nbRfBW; i++) {
+        ui->rfBW->addItem(QString("%1").arg(NFMDemodSettings::getRFBW(i) / 1000.0, 0, 'f', 2));
+    }
+
+    int ctcss_nbTones;
+    const Real *ctcss_tones = m_nfmDemod->getCtcssToneSet(ctcss_nbTones);
+
+    ui->ctcss->addItem("--");
+
+    for (int i=0; i<ctcss_nbTones; i++)
+    {
+        ui->ctcss->addItem(QString("%1").arg(ctcss_tones[i]));
+    }
+
+    blockApplySettings(false);
 
 	ui->audioMute->setStyleSheet("QToolButton { background:rgb(79,79,79); }"); // squelch closed
 
@@ -321,41 +282,38 @@ NFMDemodGUI::NFMDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidg
 	ui->deltaFrequency->setValueRange(false, 7, -9999999, 9999999);
     ui->channelPowerMeter->setColorTheme(LevelMeterSignalDB::ColorGreenAndBlue);
 
-	m_channelizer = new DownChannelizer(m_nfmDemod);
-	m_threadedChannelizer = new ThreadedBasebandSampleSink(m_channelizer, this);
-	m_deviceAPI->addThreadedSink(m_threadedChannelizer);
-
-	//m_channelMarker = new ChannelMarker(this);
-	m_channelMarker.setColor(Qt::red);
-	m_channelMarker.setBandwidth(12500);
-	m_channelMarker.setCenterFrequency(0);
-	m_channelMarker.setVisible(true);
+    m_channelMarker.blockSignals(true);
+    m_channelMarker.setColor(Qt::red);
+    m_channelMarker.setBandwidth(5000);
+    m_channelMarker.setCenterFrequency(0);
     m_channelMarker.setTitle("NFM Demodulator");
     m_channelMarker.setUDPAddress("127.0.0.1");
     m_channelMarker.setUDPSendPort(9999);
-    m_channelMarker.setVisible(true);
-    setTitleColor(m_channelMarker.getColor());
+    m_channelMarker.blockSignals(false);
+    m_channelMarker.setVisible(true); // activate signal on the last setting only
 
-	connect(&m_channelMarker, SIGNAL(changed()), this, SLOT(channelMarkerChanged()));
+    m_settings.setChannelMarker(&m_channelMarker);
 
-	m_deviceAPI->registerChannelInstance(m_channelID, this);
-	m_deviceAPI->addChannelMarker(&m_channelMarker);
-	m_deviceAPI->addRollupWidget(this);
+    m_deviceUISet->registerRxChannelInstance(NFMDemod::m_channelID, this);
+	m_deviceUISet->addChannelMarker(&m_channelMarker);
+	m_deviceUISet->addRollupWidget(this);
+
+	connect(&m_channelMarker, SIGNAL(changedByCursor()), this, SLOT(channelMarkerChangedByCursor()));
+    connect(&m_channelMarker, SIGNAL(highlightedByCursor()), this, SLOT(channelMarkerHighlightedByCursor()));
 
 	QChar delta = QChar(0x94, 0x03);
 	ui->deltaSquelch->setText(delta);
 
+	connect(getInputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()));
+
+	displaySettings();
 	applySettings(true);
 }
 
 NFMDemodGUI::~NFMDemodGUI()
 {
-    m_deviceAPI->removeChannelInstance(this);
-    m_deviceAPI->removeThreadedSink(m_threadedChannelizer);
-	delete m_threadedChannelizer;
-	delete m_channelizer;
-	delete m_nfmDemod;
-	//delete m_channelMarker;
+    m_deviceUISet->removeRxChannelInstance(this);
+	delete m_nfmDemod; // TODO: check this: when the GUI closes it has to delete the demodulator
 	delete ui;
 }
 
@@ -365,48 +323,81 @@ void NFMDemodGUI::applySettings(bool force)
 	{
 		qDebug() << "NFMDemodGUI::applySettings";
 
-		setTitleColor(m_channelMarker.getColor());
+        NFMDemod::MsgConfigureChannelizer* channelConfigMsg = NFMDemod::MsgConfigureChannelizer::create(
+                48000, m_channelMarker.getCenterFrequency());
+        m_nfmDemod->getInputMessageQueue()->push(channelConfigMsg);
 
-		m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-			48000,
-			m_channelMarker.getCenterFrequency());
-
-        ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
-
-		m_nfmDemod->configure(m_nfmDemod->getInputMessageQueue(),
-			m_rfBW[ui->rfBW->currentIndex()],
-			ui->afBW->value() * 1000.0f,
-			m_fmDev[ui->rfBW->currentIndex()],
-			ui->volume->value() / 10.0f,
-			ui->squelchGate->value(), // in 10ths of ms 1 -> 50
-			ui->deltaSquelch->isChecked(),
-			ui->squelch->value(), // -1000 -> 0
-			ui->ctcssOn->isChecked(),
-			ui->audioMute->isChecked(),
-			ui->copyAudioToUDP->isChecked(),
-			m_channelMarker.getUDPAddress(),
-			m_channelMarker.getUDPSendPort(),
-			force);
+        NFMDemod::MsgConfigureNFMDemod* message = NFMDemod::MsgConfigureNFMDemod::create( m_settings, force);
+        m_nfmDemod->getInputMessageQueue()->push(message);
 	}
+}
+
+void NFMDemodGUI::displaySettings()
+{
+    m_channelMarker.blockSignals(true);
+    m_channelMarker.setCenterFrequency(m_settings.m_inputFrequencyOffset);
+    m_channelMarker.setBandwidth(m_settings.m_rfBandwidth);
+    m_channelMarker.setTitle(m_settings.m_title);
+    m_channelMarker.blockSignals(false);
+    m_channelMarker.setColor(m_settings.m_rgbColor);
+
+    setTitleColor(m_settings.m_rgbColor);
+    setWindowTitle(m_channelMarker.getTitle());
+    displayUDPAddress();
+
+    blockApplySettings(true);
+
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+
+    ui->rfBW->setCurrentIndex(NFMDemodSettings::getRFBWIndex(m_settings.m_rfBandwidth));
+
+    ui->afBWText->setText(QString("%1 k").arg(m_settings.m_afBandwidth / 1000.0));
+    ui->afBW->setValue(m_settings.m_afBandwidth / 1000.0);
+
+    ui->volumeText->setText(QString("%1").arg(m_settings.m_volume, 0, 'f', 1));
+    ui->volume->setValue(m_settings.m_volume * 10.0);
+
+    ui->squelchGateText->setText(QString("%1").arg(m_settings.m_squelchGate * 10.0f, 0, 'f', 0));
+    ui->squelchGate->setValue(m_settings.m_squelchGate);
+
+    ui->deltaSquelch->setChecked(m_settings.m_deltaSquelch);
+    ui->squelch->setValue(m_settings.m_squelch * 1.0);
+
+    if (m_settings.m_deltaSquelch)
+    {
+        ui->squelchText->setText(QString("%1").arg((-m_settings.m_squelch) / 10.0, 0, 'f', 1));
+        ui->squelchText->setToolTip(tr("Squelch AF balance threshold (%)"));
+        ui->squelch->setToolTip(tr("Squelch AF balance threshold (%)"));
+    }
+    else
+    {
+        ui->squelchText->setText(QString("%1").arg(m_settings.m_squelch / 10.0, 0, 'f', 1));
+        ui->squelchText->setToolTip(tr("Squelch power threshold (dB)"));
+        ui->squelch->setToolTip(tr("Squelch AF balance threshold (%)"));
+    }
+
+    ui->ctcssOn->setChecked(m_settings.m_ctcssOn);
+    ui->audioMute->setChecked(m_settings.m_audioMute);
+    ui->copyAudioToUDP->setChecked(m_settings.m_copyAudioToUDP);
+
+    ui->ctcss->setCurrentIndex(m_settings.m_ctcssIndex);
+
+    blockApplySettings(false);
 }
 
 void NFMDemodGUI::displayUDPAddress()
 {
-    ui->copyAudioToUDP->setToolTip(QString("Copy audio output to UDP %1:%2").arg(m_channelMarker.getUDPAddress()).arg(m_channelMarker.getUDPSendPort()));
+    ui->copyAudioToUDP->setToolTip(QString("Copy audio output to UDP %1:%2").arg(m_settings.m_udpAddress).arg(m_settings.m_udpPort));
 }
 
 void NFMDemodGUI::leaveEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(false);
-	blockApplySettings(false);
 }
 
 void NFMDemodGUI::enterEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(true);
-	blockApplySettings(false);
 }
 
 void NFMDemodGUI::setCtcssFreq(Real ctcssFreq)

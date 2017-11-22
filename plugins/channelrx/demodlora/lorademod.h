@@ -18,13 +18,17 @@
 #ifndef INCLUDE_LoRaDEMOD_H
 #define INCLUDE_LoRaDEMOD_H
 
-#include <dsp/basebandsamplesink.h>
 #include <QMutex>
 #include <vector>
+
+#include "dsp/basebandsamplesink.h"
+#include "channel/channelsinkapi.h"
 #include "dsp/nco.h"
 #include "dsp/interpolator.h"
 #include "util/message.h"
 #include "dsp/fftfilt.h"
+
+#include "lorademodsettings.h"
 
 #define DATA_BITS (6)
 #define SAMPLEBITS (DATA_BITS + 2)
@@ -32,17 +36,72 @@
 #define LORA_SFFT_LEN (SPREADFACTOR / 2)
 #define LORA_SQUELCH (3)
 
-class LoRaDemod : public BasebandSampleSink {
-public:
-	LoRaDemod(BasebandSampleSink* sampleSink);
-	virtual ~LoRaDemod();
+class DeviceSourceAPI;
+class ThreadedBasebandSampleSink;
+class DownChannelizer;
 
-	void configure(MessageQueue* messageQueue, Real Bandwidth);
+class LoRaDemod : public BasebandSampleSink, public ChannelSinkAPI {
+public:
+    class MsgConfigureLoRaDemod : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        const LoRaDemodSettings& getSettings() const { return m_settings; }
+        bool getForce() const { return m_force; }
+
+        static MsgConfigureLoRaDemod* create(const LoRaDemodSettings& settings, bool force)
+        {
+            return new MsgConfigureLoRaDemod(settings, force);
+        }
+
+    private:
+        LoRaDemodSettings m_settings;
+        bool m_force;
+
+        MsgConfigureLoRaDemod(const LoRaDemodSettings& settings, bool force) :
+            Message(),
+            m_settings(settings),
+            m_force(force)
+        { }
+    };
+
+    class MsgConfigureChannelizer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int getSampleRate() const { return m_sampleRate; }
+        int getCenterFrequency() const { return m_centerFrequency; }
+
+        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
+        {
+            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
+        }
+
+    private:
+        int m_sampleRate;
+        int  m_centerFrequency;
+
+        MsgConfigureChannelizer(int sampleRate, int centerFrequency) :
+            Message(),
+            m_sampleRate(sampleRate),
+            m_centerFrequency(centerFrequency)
+        { }
+    };
+
+	LoRaDemod(DeviceSourceAPI* deviceAPI);
+	virtual ~LoRaDemod();
+	void setSpectrumSink(BasebandSampleSink* sampleSink) { m_sampleSink = sampleSink; }
 
 	virtual void feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool pO);
 	virtual void start();
 	virtual void stop();
 	virtual bool handleMessage(const Message& cmd);
+
+    virtual int getDeltaFrequency() const { return 0; }
+    virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual void getTitle(QString& title) { title = m_settings.m_title; }
+
+    static const QString m_channelID;
 
 private:
 	int  detect(Complex sample, Complex angle);
@@ -53,26 +112,10 @@ private:
 	void hamming6(char* inout, int size);
 	void prng6(char* inout, int size);
 
-	class MsgConfigureLoRaDemod : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		Real getBandwidth() const { return m_Bandwidth; }
-
-		static MsgConfigureLoRaDemod* create(Real Bandwidth)
-		{
-			return new MsgConfigureLoRaDemod(Bandwidth);
-		}
-
-	private:
-		Real m_Bandwidth;
-
-		MsgConfigureLoRaDemod(Real Bandwidth) :
-			Message(),
-			m_Bandwidth(Bandwidth)
-		{
-		}
-	};
+	DeviceSourceAPI *m_deviceAPI;
+    ThreadedBasebandSampleSink* m_threadedChannelizer;
+    DownChannelizer* m_channelizer;
+    LoRaDemodSettings m_settings;
 
 	Real m_Bandwidth;
 	int m_sampleRate;

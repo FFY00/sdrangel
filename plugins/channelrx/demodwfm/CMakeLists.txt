@@ -3,12 +3,14 @@ project(wfm)
 set(wfm_SOURCES
 	wfmdemod.cpp
 	wfmdemodgui.cpp
+	wfmdemodsettings.cpp
 	wfmplugin.cpp
 )
 
 set(wfm_HEADERS
 	wfmdemod.h
 	wfmdemodgui.h
+	wfmdemodsettings.h
 	wfmplugin.h
 )
 
@@ -38,6 +40,7 @@ add_library(demodwfm SHARED
 target_link_libraries(demodwfm
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(demodwfm Core Widgets)

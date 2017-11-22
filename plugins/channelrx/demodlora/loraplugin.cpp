@@ -1,13 +1,13 @@
-#include "../../channelrx/demodlora/loraplugin.h"
-
 #include <QtPlugin>
 #include "plugin/pluginapi.h"
 
-#include "../../channelrx/demodlora/lorademodgui.h"
+#include "loraplugin.h"
+#include "lorademodgui.h"
+#include "lorademod.h"
 
 const PluginDescriptor LoRaPlugin::m_pluginDescriptor = {
 	QString("LoRa Demodulator"),
-	QString("2.0.0"),
+	QString("3.8.4"),
 	QString("(c) 2015 John Greb"),
 	QString("http://www.maintech.de"),
 	true,
@@ -30,21 +30,27 @@ void LoRaPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI = pluginAPI;
 
 	// register demodulator
-	m_pluginAPI->registerRxChannel(LoRaDemodGUI::m_channelID, this);
+	m_pluginAPI->registerRxChannel(LoRaDemod::m_channelID, this);
 }
 
-PluginInstanceUI* LoRaPlugin::createRxChannel(const QString& channelName, DeviceSourceAPI *deviceAPI)
+PluginInstanceGUI* LoRaPlugin::createRxChannelGUI(const QString& channelName, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
 {
-	if(channelName == LoRaDemodGUI::m_channelID)
+	if(channelName == LoRaDemod::m_channelID)
 	{
-		LoRaDemodGUI* gui = LoRaDemodGUI::create(m_pluginAPI, deviceAPI);
+		LoRaDemodGUI* gui = LoRaDemodGUI::create(m_pluginAPI, deviceUISet, rxChannel);
 		return gui;
 	} else {
-		return NULL;
+		return 0;
 	}
 }
 
-void LoRaPlugin::createInstanceLoRa(DeviceSourceAPI *deviceAPI)
+BasebandSampleSink* LoRaPlugin::createRxChannel(const QString& channelName, DeviceSourceAPI *deviceAPI)
 {
-	LoRaDemodGUI::create(m_pluginAPI, deviceAPI);
+    if(channelName == LoRaDemod::m_channelID)
+    {
+        LoRaDemod* sink = new LoRaDemod(deviceAPI);
+        return sink;
+    } else {
+        return 0;
+    }
 }

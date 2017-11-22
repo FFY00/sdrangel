@@ -27,23 +27,73 @@
 class DeviceLimeSDRShared
 {
 public:
-    class MsgCrossReportToGUI : public Message {
+    class MsgReportBuddyChange : public Message {
         MESSAGE_CLASS_DECLARATION
 
     public:
-        int getSampleRate() const { return m_sampleRate; }
+        int      getDevSampleRate() const { return m_devSampleRate; }
+        int      getLog2HardDecimInterp() const { return m_log2HardDecimInterp; }
+        uint64_t getCenterFrequency() const { return m_centerFrequency; }
+        bool getRxElseTx() const { return m_rxElseTx; }
 
-        static MsgCrossReportToGUI* create(int sampleRate)
+        static MsgReportBuddyChange* create(
+                int devSampleRate,
+                int log2HardDecimInterp,
+                uint64_t centerFrequency,
+                bool rxElseTx)
         {
-            return new MsgCrossReportToGUI(sampleRate);
+            return new MsgReportBuddyChange(
+                    devSampleRate,
+                    log2HardDecimInterp,
+                    centerFrequency,
+                    rxElseTx);
         }
 
     private:
-        int m_sampleRate;
+        int      m_devSampleRate;       //!< device/host sample rate
+        int      m_log2HardDecimInterp; //!< log2 of hardware decimation or interpolation
+        uint64_t m_centerFrequency;     //!< Center frequency
+        bool     m_rxElseTx;            //!< tells which side initiated the message
 
-        MsgCrossReportToGUI(int sampleRate) :
+        MsgReportBuddyChange(
+                int devSampleRate,
+                int log2HardDecimInterp,
+                uint64_t centerFrequency,
+                bool rxElseTx) :
             Message(),
-            m_sampleRate(sampleRate)
+            m_devSampleRate(devSampleRate),
+            m_log2HardDecimInterp(log2HardDecimInterp),
+            m_centerFrequency(centerFrequency),
+            m_rxElseTx(rxElseTx)
+        { }
+    };
+
+    class MsgReportClockSourceChange : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        bool     getExtClock() const { return m_extClock; }
+        uint32_t getExtClockFeq() const { return m_extClockFreq; }
+
+        static MsgReportClockSourceChange* create(
+                bool extClock,
+                uint32_t m_extClockFreq)
+        {
+            return new MsgReportClockSourceChange(
+                    extClock,
+                    m_extClockFreq);
+        }
+
+    private:
+        bool     m_extClock;      //!< True if external clock source
+        uint32_t m_extClockFreq;  //!< Frequency (Hz) of external clock source
+
+        MsgReportClockSourceChange(
+                bool extClock,
+                uint32_t m_extClockFreq) :
+            Message(),
+            m_extClock(extClock),
+            m_extClockFreq(m_extClockFreq)
         { }
     };
 

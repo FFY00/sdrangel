@@ -27,21 +27,23 @@
 #include "dsp/dspcommands.h"
 #include "device/devicesinkapi.h"
 #include "device/devicesourceapi.h"
+#include "device/deviceuiset.h"
 #include "hackrf/devicehackrfvalues.h"
 #include "hackrf/devicehackrfshared.h"
 
 #include "ui_hackrfoutputgui.h"
 
-HackRFOutputGui::HackRFOutputGui(DeviceSinkAPI *deviceAPI, QWidget* parent) :
+HackRFOutputGui::HackRFOutputGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	QWidget(parent),
 	ui(new Ui::HackRFOutputGui),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
+	m_forceSettings(true),
 	m_settings(),
 	m_deviceSampleSink(0),
-	m_lastEngineState((DSPDeviceSinkEngine::State)-1)
+	m_lastEngineState((DSPDeviceSinkEngine::State)-1),
+	m_doApplySettings(true)
 {
-    m_deviceSampleSink = new HackRFOutput(m_deviceAPI);
-    m_deviceAPI->setSink(m_deviceSampleSink);
+    m_deviceSampleSink = (HackRFOutput*) m_deviceUISet->m_deviceSinkAPI->getSampleSink();
 
     ui->setupUi(this);
 	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
@@ -56,13 +58,13 @@ HackRFOutputGui::HackRFOutputGui(DeviceSinkAPI *deviceAPI, QWidget* parent) :
 
 	displaySettings();
 	displayBandwidths();
+	sendSettings();
 
-    connect(m_deviceAPI->getDeviceOutputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleDSPMessages()), Qt::QueuedConnection);
+	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 }
 
 HackRFOutputGui::~HackRFOutputGui()
 {
-	delete m_deviceSampleSink; // Valgrind memcheck
 	delete ui;
 }
 
@@ -110,6 +112,7 @@ bool HackRFOutputGui::deserialize(const QByteArray& data)
 	if(m_settings.deserialize(data))
 	{
 		displaySettings();
+		m_forceSettings = true;
 		sendSettings();
 		return true;
 	}
@@ -119,6 +122,12 @@ bool HackRFOutputGui::deserialize(const QByteArray& data)
 		return false;
 	}
 }
+
+void HackRFOutputGui::blockApplySettings(bool block)
+{
+    m_doApplySettings = !block;
+}
+
 
 bool HackRFOutputGui::handleMessage(const Message& message)
 {
@@ -133,43 +142,53 @@ bool HackRFOutputGui::handleMessage(const Message& message)
     }
 }
 
-void HackRFOutputGui::handleDSPMessages()
+void HackRFOutputGui::handleInputMessages()
 {
     Message* message;
 
-    while ((message = m_deviceAPI->getDeviceOutputMessageQueue()->pop()) != 0)
+    while ((message = m_inputMessageQueue.pop()) != 0)
     {
-        qDebug("HackRFOutputGui::handleDSPMessages: message: %s", message->getIdentifier());
+        qDebug("HackRFOutputGui::handleInputMessages: message: %s", message->getIdentifier());
 
         if (DSPSignalNotification::match(*message))
         {
             DSPSignalNotification* notif = (DSPSignalNotification*) message;
             m_sampleRate = notif->getSampleRate();
             m_deviceCenterFrequency = notif->getCenterFrequency();
-            qDebug("HackRFOutputGui::handleDSPMessages: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
+            qDebug("HackRFOutputGui::handleInputMessages: DSPSignalNotification: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
             updateSampleRateAndFrequency();
 
             delete message;
         }
         else if (DeviceHackRFShared::MsgConfigureFrequencyDelta::match(*message))
         {
+            blockApplySettings(true);
             DeviceHackRFShared::MsgConfigureFrequencyDelta* deltaMsg = (DeviceHackRFShared::MsgConfigureFrequencyDelta *) message;
             ui->centerFrequency->setValue(ui->centerFrequency->getValue() + (deltaMsg->getFrequencyDelta()/1000));
+            blockApplySettings(false);
 
             delete message;
+        }
+        else
+        {
+            if (handleMessage(*message))
+            {
+                delete message;
+            }
         }
     }
 }
 
 void HackRFOutputGui::updateSampleRateAndFrequency()
 {
-    m_deviceAPI->getSpectrum()->setSampleRate(m_sampleRate);
-    m_deviceAPI->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
+    m_deviceUISet->getSpectrum()->setSampleRate(m_sampleRate);
+    m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
     ui->deviceRateText->setText(QString("%1k").arg(QString::number(m_sampleRate/1000.0, 'g', 5)));
 }
 
 void HackRFOutputGui::displaySettings()
 {
+    blockApplySettings(true);
 	ui->centerFrequency->setValue(m_settings.m_centerFrequency / 1000);
 
 	ui->LOppm->setValue(m_settings.m_LOppmTenths);
@@ -187,10 +206,12 @@ void HackRFOutputGui::displaySettings()
 
     unsigned int bandwidthIndex = HackRFBandwidths::getBandwidthIndex(m_settings.m_bandwidth/1000);
 	ui->bbFilter->setCurrentIndex(bandwidthIndex);
+	blockApplySettings(false);
 }
 
 void HackRFOutputGui::displayBandwidths()
 {
+    blockApplySettings(true);
 	unsigned int savedIndex = HackRFBandwidths::getBandwidthIndex(m_settings.m_bandwidth/1000);
 	ui->bbFilter->blockSignals(true);
 	ui->bbFilter->clear();
@@ -210,6 +231,7 @@ void HackRFOutputGui::displayBandwidths()
 	{
 		ui->bbFilter->setCurrentIndex((int) HackRFBandwidths::m_nb_bw-1);
 	}
+	blockApplySettings(false);
 }
 
 void HackRFOutputGui::sendSettings()
@@ -279,36 +301,40 @@ void HackRFOutputGui::on_startStop_toggled(bool checked)
     if (checked)
     {
         // forcibly stop the Rx if present before starting
-        if (m_deviceAPI->getSourceBuddies().size() > 0)
+        if (m_deviceUISet->m_deviceSinkAPI->getSourceBuddies().size() > 0)
         {
-            DeviceSourceAPI *buddy = m_deviceAPI->getSourceBuddies()[0];
+            DeviceSourceAPI *buddy = m_deviceUISet->m_deviceSinkAPI->getSourceBuddies()[0];
             buddy->stopAcquisition();
         }
 
-        if (m_deviceAPI->initGeneration())
+        if (m_deviceUISet->m_deviceSinkAPI->initGeneration())
         {
-            m_deviceAPI->startGeneration();
+            m_deviceUISet->m_deviceSinkAPI->startGeneration();
             DSPEngine::instance()->startAudioInput();
         }
     }
     else
     {
-        m_deviceAPI->stopGeneration();
+        m_deviceUISet->m_deviceSinkAPI->stopGeneration();
         DSPEngine::instance()->startAudioInput();
     }
 }
 
 void HackRFOutputGui::updateHardware()
 {
-	qDebug() << "HackRFOutputGui::updateHardware";
-	HackRFOutput::MsgConfigureHackRF* message = HackRFOutput::MsgConfigureHackRF::create(m_settings);
-    m_deviceSampleSink->getInputMessageQueue()->push(message);
-	m_updateTimer.stop();
+    if (m_doApplySettings)
+    {
+        qDebug() << "HackRFOutputGui::updateHardware";
+        HackRFOutput::MsgConfigureHackRF* message = HackRFOutput::MsgConfigureHackRF::create(m_settings, m_forceSettings);
+        m_deviceSampleSink->getInputMessageQueue()->push(message);
+        m_forceSettings = true;
+        m_updateTimer.stop();
+    }
 }
 
 void HackRFOutputGui::updateStatus()
 {
-    int state = m_deviceAPI->state();
+    int state = m_deviceUISet->m_deviceSinkAPI->state();
 
     if(m_lastEngineState != state)
     {
@@ -326,7 +352,7 @@ void HackRFOutputGui::updateStatus()
                 break;
             case DSPDeviceSinkEngine::StError:
                 ui->startStop->setStyleSheet("QToolButton { background-color : red; }");
-                QMessageBox::information(this, tr("Message"), m_deviceAPI->errorMessage());
+                QMessageBox::information(this, tr("Message"), m_deviceUISet->m_deviceSinkAPI->errorMessage());
                 break;
             default:
                 break;

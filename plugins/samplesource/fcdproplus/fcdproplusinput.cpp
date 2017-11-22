@@ -59,6 +59,11 @@ FCDProPlusInput::~FCDProPlusInput()
     closeDevice();
 }
 
+void FCDProPlusInput::destroy()
+{
+    delete this;
+}
+
 bool FCDProPlusInput::openDevice()
 {
     int device = m_deviceAPI->getSampleSourceSequence();
@@ -164,7 +169,7 @@ bool FCDProPlusInput::handleMessage(const Message& message)
 	{
 		qDebug() << "FCDProPlusInput::handleMessage: MsgConfigureFCD";
 		MsgConfigureFCD& conf = (MsgConfigureFCD&) message;
-		applySettings(conf.getSettings(), false);
+		applySettings(conf.getSettings(), conf.getForce());
 		return true;
 	}
     else if (MsgFileRecord::match(message))
@@ -190,17 +195,24 @@ void FCDProPlusInput::applySettings(const FCDProPlusSettings& settings, bool for
 {
 	bool signalChange = false;
 
-	if ((m_settings.m_centerFrequency != settings.m_centerFrequency) || force)
+	if (force || (m_settings.m_centerFrequency != settings.m_centerFrequency)
+            || (m_settings.m_transverterMode != settings.m_transverterMode)
+            || (m_settings.m_transverterDeltaFrequency != settings.m_transverterDeltaFrequency))
 	{
-		qDebug() << "FCDProPlusInput::applySettings: fc: " << settings.m_centerFrequency;
-		m_settings.m_centerFrequency = settings.m_centerFrequency;
+        qint64 deviceCenterFrequency = settings.m_centerFrequency;
+        deviceCenterFrequency -= settings.m_transverterMode ? settings.m_transverterDeltaFrequency : 0;
+        deviceCenterFrequency = deviceCenterFrequency < 0 ? 0 : deviceCenterFrequency;
 
-		if (m_dev != 0)
-		{
-			set_center_freq((double) m_settings.m_centerFrequency);
-		}
+        if (m_dev != 0)
+        {
+            set_center_freq((double) deviceCenterFrequency);
+        }
 
-		signalChange = true;
+        qDebug() << "FCDProPlusInput::applySettings: center freq: " << settings.m_centerFrequency << " Hz"
+                << " device center freq: " << deviceCenterFrequency << " Hz";
+
+        m_settings.m_centerFrequency = settings.m_centerFrequency;
+        signalChange = true;
 	}
 
 	if ((m_settings.m_lnaGain != settings.m_lnaGain) || force)
@@ -289,7 +301,7 @@ void FCDProPlusInput::applySettings(const FCDProPlusSettings& settings, bool for
     {
 		DSPSignalNotification *notif = new DSPSignalNotification(fcd_traits<ProPlus>::sampleRate, m_settings.m_centerFrequency);
         m_fileSink->handleMessage(*notif); // forward to file sink
-        m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+        m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
     }
 }
 

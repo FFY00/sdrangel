@@ -1,32 +1,25 @@
 #include "wfmdemodgui.h"
 
 #include <device/devicesourceapi.h>
+#include "device/deviceuiset.h"
 #include <dsp/downchannelizer.h>
 #include <QDockWidget>
 #include <QMainWindow>
 #include <QDebug>
 
-#include "dsp/threadedbasebandsamplesink.h"
 #include "ui_wfmdemodgui.h"
 #include "dsp/dspengine.h"
 #include "plugin/pluginapi.h"
 #include "util/simpleserializer.h"
 #include "util/db.h"
-#include "gui/basicchannelsettingswidget.h"
+#include "gui/basicchannelsettingsdialog.h"
 #include "mainwindow.h"
 
 #include "wfmdemod.h"
 
-const QString WFMDemodGUI::m_channelID = "de.maintech.sdrangelove.channel.wfm";
-
-const int WFMDemodGUI::m_rfBW[] = {
-        12500, 25000, 40000, 60000, 75000, 80000, 100000, 125000, 140000, 160000, 180000, 200000, 220000, 250000
-};
-const int WFMDemodGUI::m_nbRfBW = 14;
-
-WFMDemodGUI* WFMDemodGUI::create(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI)
+WFMDemodGUI* WFMDemodGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
 {
-	WFMDemodGUI* gui = new WFMDemodGUI(pluginAPI, deviceAPI);
+	WFMDemodGUI* gui = new WFMDemodGUI(pluginAPI, deviceUISet, rxChannel);
 	return gui;
 }
 
@@ -58,81 +51,26 @@ void WFMDemodGUI::setCenterFrequency(qint64 centerFrequency)
 
 void WFMDemodGUI::resetToDefaults()
 {
-	blockApplySettings(true);
-
-	ui->rfBW->setCurrentIndex(6);
-	ui->afBW->setValue(3);
-	ui->volume->setValue(20);
-	ui->squelch->setValue(-40);
-	ui->deltaFrequency->setValue(0);
-
-	blockApplySettings(false);
-	applySettings();
+    m_settings.resetToDefaults();
+    displaySettings();
+    applySettings();
 }
 
 QByteArray WFMDemodGUI::serialize() const
 {
-	SimpleSerializer s(1);
-	s.writeS32(1, m_channelMarker.getCenterFrequency());
-	s.writeS32(2, ui->rfBW->currentIndex());
-	s.writeS32(3, ui->afBW->value());
-	s.writeS32(4, ui->volume->value());
-	s.writeS32(5, ui->squelch->value());
-	s.writeU32(7, m_channelMarker.getColor().rgb());
-	return s.final();
+    return m_settings.serialize();
 }
 
 bool WFMDemodGUI::deserialize(const QByteArray& data)
 {
-	SimpleDeserializer d(data);
-
-	if (!d.isValid())
-	{
-		resetToDefaults();
-		return false;
-	}
-
-	if (d.getVersion() == 1)
-	{
-		QByteArray bytetmp;
-		quint32 u32tmp;
-		qint32 tmp;
-
-		blockApplySettings(true);
-	    m_channelMarker.blockSignals(true);
-
-		d.readS32(1, &tmp, 0);
-		m_channelMarker.setCenterFrequency(tmp);
-
-		d.readS32(2, &tmp, 6);
-		ui->rfBW->setCurrentIndex(tmp);
-		m_channelMarker.setBandwidth(m_rfBW[tmp]);
-
-		d.readS32(3, &tmp, 3);
-		ui->afBW->setValue(tmp);
-
-		d.readS32(4, &tmp, 20);
-		ui->volume->setValue(tmp);
-
-		d.readS32(5, &tmp, -40);
-		ui->squelch->setValue(tmp);
-
-		if(d.readU32(7, &u32tmp))
-		{
-			m_channelMarker.setColor(u32tmp);
-		}
-
-		blockApplySettings(false);
-	    m_channelMarker.blockSignals(false);
-
-		applySettings();
-		return true;
-	}
-	else
-	{
-		resetToDefaults();
-		return false;
-	}
+    if(m_settings.deserialize(data)) {
+        displaySettings();
+        applySettings(true);
+        return true;
+    } else {
+        resetToDefaults();
+        return false;
+    }
 }
 
 bool WFMDemodGUI::handleMessage(const Message& message __attribute__((unused)))
@@ -140,43 +78,56 @@ bool WFMDemodGUI::handleMessage(const Message& message __attribute__((unused)))
 	return false;
 }
 
-void WFMDemodGUI::viewChanged()
+void WFMDemodGUI::channelMarkerChangedByCursor()
 {
-	applySettings();
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    applySettings();
+}
+
+void WFMDemodGUI::channelMarkerHighlightedByCursor()
+{
+    setHighlighted(m_channelMarker.getHighlighted());
 }
 
 void WFMDemodGUI::on_deltaFrequency_changed(qint64 value)
 {
     m_channelMarker.setCenterFrequency(value);
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    applySettings();
 }
 
 void WFMDemodGUI::on_rfBW_currentIndexChanged(int index)
 {
-    m_channelMarker.setBandwidth(m_rfBW[index]);
-	applySettings();
+    m_channelMarker.setBandwidth(WFMDemodSettings::getRFBW(index));
+    m_settings.m_rfBandwidth = WFMDemodSettings::getRFBW(index);
+    applySettings();
 }
 
 void WFMDemodGUI::on_afBW_valueChanged(int value)
 {
-	ui->afBWText->setText(QString("%1 kHz").arg(value));
+    ui->afBWText->setText(QString("%1 kHz").arg(value));
+    m_settings.m_afBandwidth = value * 1000.0;
 	applySettings();
 }
 
 void WFMDemodGUI::on_volume_valueChanged(int value)
 {
-	ui->volumeText->setText(QString("%1").arg(value / 10.0, 0, 'f', 1));
+    ui->volumeText->setText(QString("%1").arg(value / 10.0, 0, 'f', 1));
+    m_settings.m_volume = value / 10.0;
 	applySettings();
 }
 
 void WFMDemodGUI::on_squelch_valueChanged(int value)
 {
 	ui->squelchText->setText(QString("%1 dB").arg(value));
+    m_settings.m_squelch = value;
 	applySettings();
 }
 
 void WFMDemodGUI::on_audioMute_toggled(bool checked)
 {
-    m_audioMute = checked;
+    m_settings.m_audioMute = checked;
     applySettings();
 }
 
@@ -184,73 +135,84 @@ void WFMDemodGUI::onWidgetRolled(QWidget* widget __attribute__((unused)), bool r
 {
 }
 
-void WFMDemodGUI::onMenuDoubleClicked()
+void WFMDemodGUI::onMenuDialogCalled(const QPoint &p)
 {
-	if(!m_basicSettingsShown)
-	{
-		m_basicSettingsShown = true;
-		BasicChannelSettingsWidget* bcsw = new BasicChannelSettingsWidget(&m_channelMarker, this);
-		bcsw->show();
-	}
+    BasicChannelSettingsDialog dialog(&m_channelMarker, this);
+    dialog.move(p);
+    dialog.exec();
+
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    m_settings.m_udpAddress = m_channelMarker.getUDPAddress(),
+    m_settings.m_udpPort =  m_channelMarker.getUDPSendPort(),
+    m_settings.m_rgbColor = m_channelMarker.getColor().rgb();
+    m_settings.m_title = m_channelMarker.getTitle();
+
+    setWindowTitle(m_settings.m_title);
+    setTitleColor(m_settings.m_rgbColor);
+    displayUDPAddress();
+
+    applySettings();
 }
 
-WFMDemodGUI::WFMDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidget* parent) :
+WFMDemodGUI::WFMDemodGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel, QWidget* parent) :
 	RollupWidget(parent),
 	ui(new Ui::WFMDemodGUI),
 	m_pluginAPI(pluginAPI),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
 	m_channelMarker(this),
 	m_basicSettingsShown(false),
 	m_channelPowerDbAvg(20,0)
 {
 	ui->setupUi(this);
-    ui->deltaFrequencyLabel->setText(QString("%1f").arg(QChar(0x94, 0x03)));
+	setAttribute(Qt::WA_DeleteOnClose, true);
+	connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(onMenuDialogCalled(const QPoint &)));
+
+	m_wfmDemod = (WFMDemod*) rxChannel; //new WFMDemod(m_deviceUISet->m_deviceSourceAPI);
+
+	connect(&MainWindow::getInstance()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
+
+	ui->deltaFrequencyLabel->setText(QString("%1f").arg(QChar(0x94, 0x03)));
     ui->deltaFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
     ui->deltaFrequency->setValueRange(false, 7, -9999999, 9999999);
     ui->channelPowerMeter->setColorTheme(LevelMeterSignalDB::ColorGreenAndBlue);
 
-	setAttribute(Qt::WA_DeleteOnClose, true);
-
     blockApplySettings(true);
     ui->rfBW->clear();
-    for (int i = 0; i < m_nbRfBW; i++) {
-        ui->rfBW->addItem(QString("%1").arg(m_rfBW[i] / 1000.0, 0, 'f', 2));
+    for (int i = 0; i < WFMDemodSettings::m_nbRFBW; i++) {
+        ui->rfBW->addItem(QString("%1").arg(WFMDemodSettings::getRFBW(i) / 1000.0, 0, 'f', 2));
     }
     ui->rfBW->setCurrentIndex(6);
     blockApplySettings(false);
 
-	connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
-	connect(this, SIGNAL(menuDoubleClickEvent()), this, SLOT(onMenuDoubleClicked()));
-
-	m_wfmDemod = new WFMDemod(0);
-	m_channelizer = new DownChannelizer(m_wfmDemod);
-	m_threadedChannelizer = new ThreadedBasebandSampleSink(m_channelizer, this);
-	m_deviceAPI->addThreadedSink(m_threadedChannelizer);
-
-	connect(&m_pluginAPI->getMainWindow()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
-
-	//m_channelMarker = new ChannelMarker(this);
-	m_channelMarker.setColor(Qt::blue);
-	m_channelMarker.setBandwidth(m_rfBW[4]);
+    m_channelMarker.blockSignals(true);
+	m_channelMarker.setBandwidth(WFMDemodSettings::getRFBW(4));
 	m_channelMarker.setCenterFrequency(0);
-	m_channelMarker.setVisible(true);
+    m_channelMarker.setTitle("WFM Demodulator");
+    m_channelMarker.setUDPAddress("127.0.0.1");
+    m_channelMarker.setUDPSendPort(9999);
+    m_channelMarker.setColor(m_settings.m_rgbColor);
+    m_channelMarker.blockSignals(false);
+	m_channelMarker.setVisible(true); // activate signal on the last setting only
 
-	connect(&m_channelMarker, SIGNAL(changed()), this, SLOT(viewChanged()));
+	setTitleColor(m_channelMarker.getColor());
+    m_settings.setChannelMarker(&m_channelMarker);
 
-	m_deviceAPI->registerChannelInstance(m_channelID, this);
-	m_deviceAPI->addChannelMarker(&m_channelMarker);
-	m_deviceAPI->addRollupWidget(this);
+	m_deviceUISet->registerRxChannelInstance(WFMDemod::m_channelID, this);
+	m_deviceUISet->addChannelMarker(&m_channelMarker);
+	m_deviceUISet->addRollupWidget(this);
 
-	applySettings();
+	connect(&m_channelMarker, SIGNAL(changedByCursor()), this, SLOT(channelMarkerChangedByCursor()));
+    connect(&m_channelMarker, SIGNAL(highlightedByCursor()), this, SLOT(channelMarkerHighlightedByCursor()));
+
+    displaySettings();
+	applySettings(true);
 }
 
 WFMDemodGUI::~WFMDemodGUI()
 {
-    m_deviceAPI->removeChannelInstance(this);
-	m_deviceAPI->removeThreadedSink(m_threadedChannelizer);
-	delete m_threadedChannelizer;
-	delete m_channelizer;
-	delete m_wfmDemod;
+    m_deviceUISet->removeRxChannelInstance(this);
+	delete m_wfmDemod; // TODO: check this: when the GUI closes it has to delete the demodulator
 	//delete m_channelMarker;
 	delete ui;
 }
@@ -260,39 +222,64 @@ void WFMDemodGUI::blockApplySettings(bool block)
     m_doApplySettings = !block;
 }
 
-void WFMDemodGUI::applySettings()
+void WFMDemodGUI::applySettings(bool force)
 {
 	if (m_doApplySettings)
 	{
-		setTitleColor(m_channelMarker.getColor());
+        WFMDemod::MsgConfigureChannelizer *msgChan = WFMDemod::MsgConfigureChannelizer::create(
+                requiredBW(WFMDemodSettings::getRFBW(ui->rfBW->currentIndex())),
+                m_channelMarker.getCenterFrequency());
+        m_wfmDemod->getInputMessageQueue()->push(msgChan);
 
-		m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-			requiredBW(m_rfBW[ui->rfBW->currentIndex()]), // TODO: this is where requested sample rate is specified
-			m_channelMarker.getCenterFrequency());
-
-		ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
-
-		m_wfmDemod->configure(m_wfmDemod->getInputMessageQueue(),
-		    m_rfBW[ui->rfBW->currentIndex()],
-			ui->afBW->value() * 1000.0,
-			ui->volume->value() / 10.0,
-			ui->squelch->value(),
-			ui->audioMute->isChecked());
+        WFMDemod::MsgConfigureWFMDemod* msgConfig = WFMDemod::MsgConfigureWFMDemod::create( m_settings, force);
+        m_wfmDemod->getInputMessageQueue()->push(msgConfig);
 	}
+}
+
+void WFMDemodGUI::displaySettings()
+{
+    m_channelMarker.blockSignals(true);
+    m_channelMarker.setCenterFrequency(m_settings.m_inputFrequencyOffset);
+    m_channelMarker.setBandwidth(m_settings.m_rfBandwidth);
+    m_channelMarker.setTitle(m_settings.m_title);
+    m_channelMarker.blockSignals(false);
+    m_channelMarker.setColor(m_settings.m_rgbColor); // activate signal on the last setting only
+
+    setTitleColor(m_settings.m_rgbColor);
+    setWindowTitle(m_channelMarker.getTitle());
+    displayUDPAddress();
+
+    blockApplySettings(true);
+
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+
+    ui->rfBW->setCurrentIndex(WFMDemodSettings::getRFBWIndex(m_settings.m_rfBandwidth));
+
+    ui->afBW->setValue(m_settings.m_afBandwidth/1000.0);
+    ui->afBWText->setText(QString("%1 kHz").arg(m_settings.m_afBandwidth/1000.0));
+
+    ui->volume->setValue(m_settings.m_volume * 10.0);
+    ui->volumeText->setText(QString("%1").arg(m_settings.m_volume, 0, 'f', 1));
+
+    ui->squelch->setValue(m_settings.m_squelch);
+    ui->squelchText->setText(QString("%1 dB").arg(m_settings.m_squelch));
+
+    blockApplySettings(false);
+}
+
+void WFMDemodGUI::displayUDPAddress()
+{
+    //ui->copyAudioToUDP->setToolTip(QString("Copy audio output to UDP %1:%2").arg(m_channelMarker.getUDPAddress()).arg(m_channelMarker.getUDPSendPort()));
 }
 
 void WFMDemodGUI::leaveEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(false);
-	blockApplySettings(false);
 }
 
 void WFMDemodGUI::enterEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(true);
-	blockApplySettings(false);
 }
 
 void WFMDemodGUI::tick()

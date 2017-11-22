@@ -22,15 +22,16 @@
 #include "dsp/dspcommands.h"
 #include "gui/glspectrum.h"
 #include "device/devicesourceapi.h"
+#include "device/deviceuiset.h"
 #include "plutosdr/deviceplutosdr.h"
 #include "plutosdrinput.h"
 #include "ui_plutosdrinputgui.h"
 #include "plutosdrinputgui.h"
 
-PlutoSDRInputGui::PlutoSDRInputGui(DeviceSourceAPI *deviceAPI, QWidget* parent) :
+PlutoSDRInputGui::PlutoSDRInputGui(DeviceUISet *deviceUISet, QWidget* parent) :
     QWidget(parent),
     ui(new Ui::PlutoSDRInputGUI),
-    m_deviceAPI(deviceAPI),
+    m_deviceUISet(deviceUISet),
     m_settings(),
     m_forceSettings(true),
     m_sampleSource(NULL),
@@ -40,12 +41,11 @@ PlutoSDRInputGui::PlutoSDRInputGui(DeviceSourceAPI *deviceAPI, QWidget* parent) 
     m_doApplySettings(true),
     m_statusCounter(0)
 {
-    m_sampleSource = new PlutoSDRInput(m_deviceAPI);
-    m_deviceAPI->setSource(m_sampleSource);
+    m_sampleSource = (PlutoSDRInput*) m_deviceUISet->m_deviceSourceAPI->getSampleSource();
 
     ui->setupUi(this);
     ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-    ui->centerFrequency->setValueRange(7, DevicePlutoSDR::loLowLimitFreq/1000, DevicePlutoSDR::loHighLimitFreq/1000);
+    updateFrequencyLimits();
 
     ui->sampleRate->setColorMapper(ColorMapper(ColorMapper::GrayGreenYellow));
     ui->sampleRate->setValueRange(8, DevicePlutoSDR::srLowLimitFreq, DevicePlutoSDR::srHighLimitFreq);
@@ -67,7 +67,7 @@ PlutoSDRInputGui::PlutoSDRInputGui(DeviceSourceAPI *deviceAPI, QWidget* parent) 
     connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
     m_statusTimer.start(500);
 
-    connect(m_deviceAPI->getDeviceOutputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleDSPMessages()), Qt::QueuedConnection);
+    connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 }
 
 PlutoSDRInputGui::~PlutoSDRInputGui()
@@ -131,22 +131,39 @@ bool PlutoSDRInputGui::deserialize(const QByteArray& data)
 
 bool PlutoSDRInputGui::handleMessage(const Message& message __attribute__((unused)))
 {
-    return false;
+    if (DevicePlutoSDRShared::MsgCrossReportToBuddy::match(message)) // message from buddy
+    {
+        DevicePlutoSDRShared::MsgCrossReportToBuddy& conf = (DevicePlutoSDRShared::MsgCrossReportToBuddy&) message;
+        m_settings.m_devSampleRate = conf.getDevSampleRate();
+        m_settings.m_lpfFIRlog2Decim = conf.getLpfFiRlog2IntDec();
+        m_settings.m_lpfFIRBW = conf.getLpfFirbw();
+        m_settings.m_LOppmTenths = conf.getLoPPMTenths();
+        m_settings.m_lpfFIREnable = conf.isLpfFirEnable();
+        blockApplySettings(true);
+        displaySettings();
+        blockApplySettings(false);
+
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }
 
 void PlutoSDRInputGui::on_startStop_toggled(bool checked)
 {
     if (checked)
     {
-        if (m_deviceAPI->initAcquisition())
+        if (m_deviceUISet->m_deviceSourceAPI->initAcquisition())
         {
-            m_deviceAPI->startAcquisition();
+            m_deviceUISet->m_deviceSourceAPI->startAcquisition();
             DSPEngine::instance()->startAudioOutput();
         }
     }
     else
     {
-        m_deviceAPI->stopAcquisition();
+        m_deviceUISet->m_deviceSourceAPI->stopAcquisition();
         DSPEngine::instance()->stopAudioOutput();
     }
 }
@@ -196,7 +213,7 @@ void PlutoSDRInputGui::on_swDecim_currentIndexChanged(int index)
 
 void PlutoSDRInputGui::on_fcPos_currentIndexChanged(int index)
 {
-    m_settings.m_fcPos = (PlutoSDRInputSettings::fcPos_t) (index > 2 ? 2 : index);
+    m_settings.m_fcPos = (PlutoSDRInputSettings::fcPos_t) (index < (int) PlutoSDRInputSettings::FC_POS_END ? index : PlutoSDRInputSettings::FC_POS_CENTER);
     sendSettings();
 }
 
@@ -259,8 +276,21 @@ void PlutoSDRInputGui::on_antenna_currentIndexChanged(int index)
     sendSettings();
 }
 
+void PlutoSDRInputGui::on_transverter_clicked()
+{
+    m_settings.m_transverterMode = ui->transverter->getDeltaFrequencyAcive();
+    m_settings.m_transverterDeltaFrequency = ui->transverter->getDeltaFrequency();
+    qDebug("PlutoSDRInputGui::on_transverter_clicked: %lld Hz %s", m_settings.m_transverterDeltaFrequency, m_settings.m_transverterMode ? "on" : "off");
+    updateFrequencyLimits();
+    m_settings.m_centerFrequency = ui->centerFrequency->getValueNew()*1000;
+    sendSettings();
+}
+
 void PlutoSDRInputGui::displaySettings()
 {
+    ui->transverter->setDeltaFrequency(m_settings.m_transverterDeltaFrequency);
+    ui->transverter->setDeltaFrequencyActive(m_settings.m_transverterMode);
+    updateFrequencyLimits();
     ui->centerFrequency->setValue(m_settings.m_centerFrequency / 1000);
     ui->sampleRate->setValue(m_settings.m_devSampleRate);
 
@@ -315,7 +345,7 @@ void PlutoSDRInputGui::blockApplySettings(bool block)
 
 void PlutoSDRInputGui::updateStatus()
 {
-    int state = m_deviceAPI->state();
+    int state = m_deviceUISet->m_deviceSourceAPI->state();
 
     if(m_lastEngineState != state)
     {
@@ -332,7 +362,7 @@ void PlutoSDRInputGui::updateStatus()
                 break;
             case DSPDeviceSourceEngine::StError:
                 ui->startStop->setStyleSheet("QToolButton { background-color : red; }");
-                QMessageBox::information(this, tr("Message"), m_deviceAPI->errorMessage());
+                QMessageBox::information(this, tr("Message"), m_deviceUISet->m_deviceSourceAPI->errorMessage());
                 break;
             default:
                 break;
@@ -357,11 +387,14 @@ void PlutoSDRInputGui::updateStatus()
         std::string rssiStr;
         ((PlutoSDRInput *) m_sampleSource)->getRSSI(rssiStr);
         ui->rssiText->setText(tr("-%1").arg(QString::fromStdString(rssiStr)));
+        int gaindB;
+        ((PlutoSDRInput *) m_sampleSource)->getGain(gaindB);
+        ui->actualGainText->setText(tr("%1").arg(gaindB));
     }
 
     if (m_statusCounter % 10 == 0) // 5s
     {
-        if (m_deviceAPI->isBuddyLeader()) {
+        if (m_deviceUISet->m_deviceSourceAPI->isBuddyLeader()) {
             ((PlutoSDRInput *) m_sampleSource)->fetchTemperature();
         }
 
@@ -386,30 +419,53 @@ void PlutoSDRInputGui::setSampleRateLimits()
     ui->sampleRate->setValue(m_settings.m_devSampleRate);
 }
 
-void PlutoSDRInputGui::handleDSPMessages()
+void PlutoSDRInputGui::updateFrequencyLimits()
+{
+    // values in kHz
+    qint64 deltaFrequency = m_settings.m_transverterMode ? m_settings.m_transverterDeltaFrequency/1000 : 0;
+    qint64 minLimit = DevicePlutoSDR::loLowLimitFreq/1000 + deltaFrequency;
+    qint64 maxLimit = DevicePlutoSDR::loHighLimitFreq/1000 + deltaFrequency;
+
+    minLimit = minLimit < 0 ? 0 : minLimit > 9999999 ? 9999999 : minLimit;
+    maxLimit = maxLimit < 0 ? 0 : maxLimit > 9999999 ? 9999999 : maxLimit;
+
+    qDebug("PlutoSDRInputGui::updateFrequencyLimits: delta: %lld min: %lld max: %lld", deltaFrequency, minLimit, maxLimit);
+
+    ui->centerFrequency->setValueRange(7, minLimit, maxLimit);
+}
+
+void PlutoSDRInputGui::handleInputMessages()
 {
     Message* message;
 
-    while ((message = m_deviceAPI->getDeviceOutputMessageQueue()->pop()) != 0)
+    while ((message = m_inputMessageQueue.pop()) != 0)
     {
+        qDebug("PlutoSDRInputGui::handleInputMessages: message: %s", message->getIdentifier());
+
         if (DSPSignalNotification::match(*message))
         {
-            qDebug("LimeSDRInputGUI::handleMessagesToGUI: message: %s", message->getIdentifier());
             DSPSignalNotification* notif = (DSPSignalNotification*) message;
             m_sampleRate = notif->getSampleRate();
             m_deviceCenterFrequency = notif->getCenterFrequency();
-            qDebug("LimeSDRInputGUI::handleMessagesToGUI: SampleRate: %d, CenterFrequency: %llu", notif->getSampleRate(), notif->getCenterFrequency());
+            qDebug("PlutoSDRInputGui::handleInputMessages: DSPSignalNotification: SampleRate: %d, CenterFrequency: %llu", notif->getSampleRate(), notif->getCenterFrequency());
             updateSampleRateAndFrequency();
             setFIRBWLimits();
 
             delete message;
+        }
+        else
+        {
+            if (handleMessage(*message))
+            {
+                delete message;
+            }
         }
     }
 }
 
 void PlutoSDRInputGui::updateSampleRateAndFrequency()
 {
-    m_deviceAPI->getSpectrum()->setSampleRate(m_sampleRate);
-    m_deviceAPI->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
+    m_deviceUISet->getSpectrum()->setSampleRate(m_sampleRate);
+    m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
     ui->deviceRateLabel->setText(tr("%1k").arg(QString::number(m_sampleRate / 1000.0f, 'g', 5)));
 }

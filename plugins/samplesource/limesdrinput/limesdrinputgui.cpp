@@ -27,22 +27,21 @@
 #include "dsp/dspengine.h"
 #include "dsp/dspcommands.h"
 #include "device/devicesourceapi.h"
+#include "device/deviceuiset.h"
 
-LimeSDRInputGUI::LimeSDRInputGUI(DeviceSourceAPI *deviceAPI, QWidget* parent) :
+LimeSDRInputGUI::LimeSDRInputGUI(DeviceUISet *deviceUISet, QWidget* parent) :
     QWidget(parent),
     ui(new Ui::LimeSDRInputGUI),
-    m_deviceAPI(deviceAPI),
+    m_deviceUISet(deviceUISet),
     m_settings(),
-    m_sampleSource(0),
     m_sampleRate(0),
     m_lastEngineState((DSPDeviceSourceEngine::State)-1),
     m_doApplySettings(true),
+    m_forceSettings(true),
     m_statusCounter(0),
     m_deviceStatusCounter(0)
 {
-    m_limeSDRInput = new LimeSDRInput(m_deviceAPI);
-    m_sampleSource = (DeviceSampleSource *) m_limeSDRInput;
-    m_deviceAPI->setSource(m_sampleSource);
+    m_limeSDRInput = (LimeSDRInput*) m_deviceUISet->m_deviceSourceAPI->getSampleSource();
 
     ui->setupUi(this);
 
@@ -76,12 +75,11 @@ LimeSDRInputGUI::LimeSDRInputGUI(DeviceSourceAPI *deviceAPI, QWidget* parent) :
 
     displaySettings();
 
-    connect(m_deviceAPI->getDeviceOutputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleMessagesToGUI()), Qt::QueuedConnection);
+    connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 }
 
 LimeSDRInputGUI::~LimeSDRInputGUI()
 {
-    delete m_sampleSource; // Valgrind memcheck
     delete ui;
 }
 
@@ -129,6 +127,7 @@ bool LimeSDRInputGUI::deserialize(const QByteArray& data)
     if (m_settings.deserialize(data))
     {
         displaySettings();
+        m_forceSettings = true;
         sendSettings();
         return true;
     }
@@ -139,100 +138,112 @@ bool LimeSDRInputGUI::deserialize(const QByteArray& data)
     }
 }
 
-bool LimeSDRInputGUI::handleMessage(const Message& message __attribute__((unused))) // TODO: does not seem to be really useful in any of the source (+sink?) plugins
+bool LimeSDRInputGUI::handleMessage(const Message& message)
 {
+
+    if (DeviceLimeSDRShared::MsgReportBuddyChange::match(message))
+    {
+        DeviceLimeSDRShared::MsgReportBuddyChange& report = (DeviceLimeSDRShared::MsgReportBuddyChange&) message;
+        m_settings.m_devSampleRate = report.getDevSampleRate();
+        m_settings.m_log2HardDecim = report.getLog2HardDecimInterp();
+
+        if (report.getRxElseTx()) {
+            m_settings.m_centerFrequency = report.getCenterFrequency();
+        }
+
+        blockApplySettings(true);
+        displaySettings();
+        blockApplySettings(false);
+
+        return true;
+    }
+    else if (DeviceLimeSDRShared::MsgReportClockSourceChange::match(message))
+    {
+        DeviceLimeSDRShared::MsgReportClockSourceChange& report = (DeviceLimeSDRShared::MsgReportClockSourceChange&) message;
+        m_settings.m_extClockFreq = report.getExtClockFeq();
+        m_settings.m_extClock = report.getExtClock();
+
+        blockApplySettings(true);
+        ui->extClock->setExternalClockFrequency(m_settings.m_extClockFreq);
+        ui->extClock->setExternalClockActive(m_settings.m_extClock);
+        blockApplySettings(false);
+
+        return true;
+    }
+    else if (LimeSDRInput::MsgReportStreamInfo::match(message))
+    {
+        LimeSDRInput::MsgReportStreamInfo& report = (LimeSDRInput::MsgReportStreamInfo&) message;
+
+        if (report.getSuccess())
+        {
+            if (report.getActive()) {
+                ui->streamStatusLabel->setStyleSheet("QLabel { background-color : green; }");
+            } else {
+                ui->streamStatusLabel->setStyleSheet("QLabel { background-color : blue; }");
+            }
+
+            ui->streamLinkRateText->setText(tr("%1 MB/s").arg(QString::number(report.getLinkRate() / 1000000.0f, 'f', 3)));
+
+            if (report.getUnderrun() > 0) {
+                ui->underrunLabel->setStyleSheet("QLabel { background-color : red; }");
+            } else {
+                ui->underrunLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
+            }
+
+            if (report.getOverrun() > 0) {
+                ui->overrunLabel->setStyleSheet("QLabel { background-color : red; }");
+            } else {
+                ui->overrunLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
+            }
+
+            if (report.getDroppedPackets() > 0) {
+                ui->droppedLabel->setStyleSheet("QLabel { background-color : red; }");
+            } else {
+                ui->droppedLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
+            }
+
+            ui->fifoBar->setMaximum(report.getFifoSize());
+            ui->fifoBar->setValue(report.getFifoFilledCount());
+            ui->fifoBar->setToolTip(tr("FIFO fill %1/%2 samples").arg(QString::number(report.getFifoFilledCount())).arg(QString::number(report.getFifoSize())));
+        }
+        else
+        {
+            ui->streamStatusLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
+        }
+
+        return true;
+    }
+    else if (DeviceLimeSDRShared::MsgReportDeviceInfo::match(message))
+    {
+        DeviceLimeSDRShared::MsgReportDeviceInfo& report = (DeviceLimeSDRShared::MsgReportDeviceInfo&) message;
+        ui->temperatureText->setText(tr("%1C").arg(QString::number(report.getTemperature(), 'f', 0)));
+        return true;
+    }
+
     return false;
 }
 
-void LimeSDRInputGUI::handleMessagesToGUI()
+void LimeSDRInputGUI::handleInputMessages()
 {
     Message* message;
 
-    while ((message = m_deviceAPI->getDeviceOutputMessageQueue()->pop()) != 0)
+    while ((message = m_inputMessageQueue.pop()) != 0)
     {
         if (DSPSignalNotification::match(*message))
         {
-            qDebug("LimeSDRInputGUI::handleMessagesToGUI: message: %s", message->getIdentifier());
             DSPSignalNotification* notif = (DSPSignalNotification*) message;
             m_sampleRate = notif->getSampleRate();
             m_deviceCenterFrequency = notif->getCenterFrequency();
-            qDebug("LimeSDRInputGUI::handleMessagesToGUI: SampleRate: %d, CenterFrequency: %llu", notif->getSampleRate(), notif->getCenterFrequency());
+            qDebug("LimeSDRInputGUI::handleInputMessages: DSPSignalNotification: SampleRate: %d, CenterFrequency: %llu", notif->getSampleRate(), notif->getCenterFrequency());
             updateSampleRateAndFrequency();
 
             delete message;
         }
-        else if (LimeSDRInput::MsgReportLimeSDRToGUI::match(*message))
+        else
         {
-            qDebug("LimeSDRInputGUI::handleMessagesToGUI: message: %s", message->getIdentifier());
-            LimeSDRInput::MsgReportLimeSDRToGUI *report = (LimeSDRInput::MsgReportLimeSDRToGUI *) message;
-
-            m_settings.m_centerFrequency = report->getCenterFrequency();
-            m_settings.m_devSampleRate = report->getSampleRate();
-            m_settings.m_log2HardDecim = report->getLog2HardDecim();
-
-            blockApplySettings(true);
-            displaySettings();
-            blockApplySettings(false);
-
-            LimeSDRInput::MsgSetReferenceConfig* conf = LimeSDRInput::MsgSetReferenceConfig::create(m_settings);
-            m_sampleSource->getInputMessageQueue()->push(conf);
-
-            delete message;
-        }
-        else if (DeviceLimeSDRShared::MsgCrossReportToGUI::match(*message))
-        {
-            DeviceLimeSDRShared::MsgCrossReportToGUI *report = (DeviceLimeSDRShared::MsgCrossReportToGUI *) message;
-            m_settings.m_devSampleRate = report->getSampleRate();
-
-            blockApplySettings(true);
-            displaySettings();
-            blockApplySettings(false);
-
-            LimeSDRInput::MsgSetReferenceConfig* conf = LimeSDRInput::MsgSetReferenceConfig::create(m_settings);
-            m_sampleSource->getInputMessageQueue()->push(conf);
-
-            delete message;
-        }
-        else if (LimeSDRInput::MsgReportStreamInfo::match(*message))
-        {
-            LimeSDRInput::MsgReportStreamInfo *report = (LimeSDRInput::MsgReportStreamInfo *) message;
-
-            if (report->getSuccess())
-            {
-                ui->streamStatusLabel->setStyleSheet("QLabel { background-color : green; }");
-                ui->streamLinkRateText->setText(tr("%1 MB/s").arg(QString::number(report->getLinkRate() / 1000000.0f, 'f', 3)));
-
-                if (report->getUnderrun() > 0) {
-                    ui->underrunLabel->setStyleSheet("QLabel { background-color : red; }");
-                } else {
-                    ui->underrunLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
-                }
-
-                if (report->getOverrun() > 0) {
-                    ui->overrunLabel->setStyleSheet("QLabel { background-color : red; }");
-                } else {
-                    ui->overrunLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
-                }
-
-                if (report->getDroppedPackets() > 0) {
-                    ui->droppedLabel->setStyleSheet("QLabel { background-color : red; }");
-                } else {
-                    ui->droppedLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
-                }
-
-                ui->fifoBar->setMaximum(report->getFifoSize());
-                ui->fifoBar->setValue(report->getFifoFilledCount());
-                ui->fifoBar->setToolTip(tr("FIFO fill %1/%2 samples").arg(QString::number(report->getFifoFilledCount())).arg(QString::number(report->getFifoSize())));
+            if (handleMessage(*message)) {
+                delete message;
             }
-            else
-            {
-                ui->streamStatusLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
-            }
-        }
-        else if (DeviceLimeSDRShared::MsgReportDeviceInfo::match(*message))
-        {
-            DeviceLimeSDRShared::MsgReportDeviceInfo *report = (DeviceLimeSDRShared::MsgReportDeviceInfo *) message;
-            ui->temperatureText->setText(tr("%1C").arg(QString::number(report->getTemperature(), 'f', 0)));
         }
     }
 }
@@ -250,13 +261,16 @@ void LimeSDRInputGUI::updateADCRate()
 
 void LimeSDRInputGUI::updateSampleRateAndFrequency()
 {
-    m_deviceAPI->getSpectrum()->setSampleRate(m_sampleRate);
-    m_deviceAPI->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
+    m_deviceUISet->getSpectrum()->setSampleRate(m_sampleRate);
+    m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
     ui->deviceRateLabel->setText(tr("%1k").arg(QString::number(m_sampleRate / 1000.0f, 'g', 5)));
 }
 
 void LimeSDRInputGUI::displaySettings()
 {
+    ui->extClock->setExternalClockFrequency(m_settings.m_extClockFreq);
+    ui->extClock->setExternalClockActive(m_settings.m_extClock);
+
     ui->centerFrequency->setValue(m_settings.m_centerFrequency / 1000);
     ui->sampleRate->setValue(m_settings.m_devSampleRate);
 
@@ -324,15 +338,16 @@ void LimeSDRInputGUI::updateHardware()
     if (m_doApplySettings)
     {
         qDebug() << "LimeSDRInputGUI::updateHardware";
-        LimeSDRInput::MsgConfigureLimeSDR* message = LimeSDRInput::MsgConfigureLimeSDR::create(m_settings);
-        m_sampleSource->getInputMessageQueue()->push(message);
+        LimeSDRInput::MsgConfigureLimeSDR* message = LimeSDRInput::MsgConfigureLimeSDR::create(m_settings, m_forceSettings);
+        m_limeSDRInput->getInputMessageQueue()->push(message);
+        m_forceSettings = false;
         m_updateTimer.stop();
     }
 }
 
 void LimeSDRInputGUI::updateStatus()
 {
-    int state = m_deviceAPI->state();
+    int state = m_deviceUISet->m_deviceSourceAPI->state();
 
     if(m_lastEngineState != state)
     {
@@ -349,7 +364,7 @@ void LimeSDRInputGUI::updateStatus()
                 break;
             case DSPDeviceSourceEngine::StError:
                 ui->startStop->setStyleSheet("QToolButton { background-color : red; }");
-                QMessageBox::information(this, tr("Message"), m_deviceAPI->errorMessage());
+                QMessageBox::information(this, tr("Message"), m_deviceUISet->m_deviceSourceAPI->errorMessage());
                 break;
             default:
                 break;
@@ -365,7 +380,7 @@ void LimeSDRInputGUI::updateStatus()
     else
     {
         LimeSDRInput::MsgGetStreamInfo* message = LimeSDRInput::MsgGetStreamInfo::create();
-        m_sampleSource->getInputMessageQueue()->push(message);
+        m_limeSDRInput->getInputMessageQueue()->push(message);
         m_statusCounter = 0;
     }
 
@@ -375,10 +390,10 @@ void LimeSDRInputGUI::updateStatus()
     }
     else
     {
-        if (m_deviceAPI->isBuddyLeader())
+        if (m_deviceUISet->m_deviceSourceAPI->isBuddyLeader())
         {
             LimeSDRInput::MsgGetDeviceInfo* message = LimeSDRInput::MsgGetDeviceInfo::create();
-            m_sampleSource->getInputMessageQueue()->push(message);
+            m_limeSDRInput->getInputMessageQueue()->push(message);
         }
 
         m_deviceStatusCounter = 0;
@@ -394,15 +409,15 @@ void LimeSDRInputGUI::on_startStop_toggled(bool checked)
 {
     if (checked)
     {
-        if (m_deviceAPI->initAcquisition())
+        if (m_deviceUISet->m_deviceSourceAPI->initAcquisition())
         {
-            m_deviceAPI->startAcquisition();
+            m_deviceUISet->m_deviceSourceAPI->startAcquisition();
             DSPEngine::instance()->startAudioOutput();
         }
     }
     else
     {
-        m_deviceAPI->stopAcquisition();
+        m_deviceUISet->m_deviceSourceAPI->stopAcquisition();
         DSPEngine::instance()->stopAudioOutput();
     }
 }
@@ -416,7 +431,7 @@ void LimeSDRInputGUI::on_record_toggled(bool checked)
     }
 
     LimeSDRInput::MsgFileRecord* message = LimeSDRInput::MsgFileRecord::create(checked);
-    m_sampleSource->getInputMessageQueue()->push(message);
+    m_limeSDRInput->getInputMessageQueue()->push(message);
 }
 
 void LimeSDRInputGUI::on_centerFrequency_changed(quint64 value)
@@ -558,3 +573,12 @@ void LimeSDRInputGUI::on_antenna_currentIndexChanged(int index)
     m_settings.m_antennaPath = (LimeSDRInputSettings::PathRFE) index;
     sendSettings();
 }
+
+void LimeSDRInputGUI::on_extClock_clicked()
+{
+    m_settings.m_extClock = ui->extClock->getExternalClockActive();
+    m_settings.m_extClockFreq = ui->extClock->getExternalClockFrequency();
+    qDebug("LimeSDRInputGUI::on_extClock_clicked: %u Hz %s", m_settings.m_extClockFreq, m_settings.m_extClock ? "on" : "off");
+    sendSettings();
+}
+

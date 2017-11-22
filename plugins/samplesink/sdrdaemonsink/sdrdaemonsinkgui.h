@@ -17,29 +17,31 @@
 #ifndef INCLUDE_SDRDAEMONSINKGUI_H
 #define INCLUDE_SDRDAEMONSINKGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QTime>
 #include <QWidget>
+
+#include "util/messagequeue.h"
 
 #include "sdrdaemonsinksettings.h"
 #include "sdrdaemonsinkoutput.h"
 
 
-class DeviceSinkAPI;
 class DeviceSampleSink;
+class DeviceUISet;
 
 namespace Ui {
 	class SDRdaemonSinkGui;
 }
 
-class SDRdaemonSinkGui : public QWidget, public PluginInstanceUI {
+class SDRdaemonSinkGui : public QWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
-	explicit SDRdaemonSinkGui(DeviceSinkAPI *deviceAPI, QWidget* parent = NULL);
+	explicit SDRdaemonSinkGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
 	virtual ~SDRdaemonSinkGui();
-	void destroy();
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -49,12 +51,13 @@ public:
 	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
+	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::SDRdaemonSinkGui* ui;
 
-	DeviceSinkAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
 	SDRdaemonSinkSettings m_settings;        //!< current settings
 	SDRdaemonSinkSettings m_controlSettings; //!< settings last sent to device via control port
 	QTimer m_updateTimer;
@@ -79,6 +82,8 @@ private:
     QPalette m_paletteRedText;
     QPalette m_paletteWhiteText;
 
+    MessageQueue m_inputMessageQueue;
+
     void blockApplySettings(bool block);
 	void displaySettings();
 	void displayTime();
@@ -91,8 +96,7 @@ private:
     void displayEventTimer();
 
 private slots:
-    void handleDSPMessages();
-    void handleSinkMessages();
+    void handleInputMessages();
     void on_centerFrequency_changed(quint64 value);
     void on_sampleRate_changed(quint64 value);
     void on_interp_currentIndexChanged(int index);

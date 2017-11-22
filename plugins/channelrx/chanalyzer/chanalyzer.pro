@@ -15,9 +15,11 @@ DEFINES += USE_SSE2=1
 QMAKE_CXXFLAGS += -msse2
 DEFINES += USE_SSE4_1=1
 QMAKE_CXXFLAGS += -msse4.1
+QMAKE_CXXFLAGS += -std=c++11
 
 INCLUDEPATH += $$PWD
 INCLUDEPATH += ../../../sdrbase
+INCLUDEPATH += ../../../sdrgui
 
 CONFIG(ANDROID):INCLUDEPATH += /opt/softs/boost_1_60_0
 CONFIG(MINGW32):INCLUDEPATH += "D:\boost_1_58_0"
@@ -38,5 +40,6 @@ chanalyzerplugin.h
 FORMS += chanalyzergui.ui
 
 LIBS += -L../../../sdrbase/$${build_subdir} -lsdrbase
+LIBS += -L../../../sdrgui/$${build_subdir} -lsdrgui
 
-RESOURCES = ../../../sdrbase/resources/res.qrc
+RESOURCES = ../../../sdrgui/resources/res.qrc

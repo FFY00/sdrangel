@@ -29,9 +29,17 @@
 #include "dsp/filerecord.h"
 
 MESSAGE_CLASS_DEFINITION(RTLSDRInput::MsgConfigureRTLSDR, Message)
-MESSAGE_CLASS_DEFINITION(RTLSDRInput::MsgQueryRTLSDR, Message)
 MESSAGE_CLASS_DEFINITION(RTLSDRInput::MsgReportRTLSDR, Message)
 MESSAGE_CLASS_DEFINITION(RTLSDRInput::MsgFileRecord, Message)
+
+const quint64 RTLSDRInput::frequencyLowRangeMin = 1000UL;
+const quint64 RTLSDRInput::frequencyLowRangeMax = 275000UL;
+const quint64 RTLSDRInput::frequencyHighRangeMin = 24000UL;
+const quint64 RTLSDRInput::frequencyHighRangeMax = 1900000UL;
+const int RTLSDRInput::sampleRateLowRangeMin = 230000U;
+const int RTLSDRInput::sampleRateLowRangeMax = 300000U;
+const int RTLSDRInput::sampleRateHighRangeMin = 950000U;
+const int RTLSDRInput::sampleRateHighRangeMax = 2400000U;
 
 RTLSDRInput::RTLSDRInput(DeviceSourceAPI *deviceAPI) :
     m_deviceAPI(deviceAPI),
@@ -55,6 +63,11 @@ RTLSDRInput::~RTLSDRInput()
     m_deviceAPI->removeSink(m_fileSink);
     delete m_fileSink;
     closeDevice();
+}
+
+void RTLSDRInput::destroy()
+{
+    delete this;
 }
 
 bool RTLSDRInput::openDevice()
@@ -101,7 +114,7 @@ bool RTLSDRInput::openDevice()
         return false;
     }
 
-    qWarning("RTLSDRInput::openDevice: open: %s %s, SN: %s", vendor, product, serial);
+    qInfo("RTLSDRInput::openDevice: open: %s %s, SN: %s", vendor, product, serial);
     m_deviceDescription = QString("%1 (SN %2)").arg(product).arg(serial);
 
     if ((res = rtlsdr_set_sample_rate(m_dev, 1152000)) < 0)
@@ -236,22 +249,12 @@ bool RTLSDRInput::handleMessage(const Message& message)
         MsgConfigureRTLSDR& conf = (MsgConfigureRTLSDR&) message;
         qDebug() << "RTLSDRInput::handleMessage: MsgConfigureRTLSDR";
 
-        bool success = applySettings(conf.getSettings(), false);
+        bool success = applySettings(conf.getSettings(), conf.getForce());
 
         if (!success)
         {
             qDebug("RTLSDRInput::handleMessage: config error");
         }
-
-        return true;
-    }
-    else if (MsgQueryRTLSDR::match(message))
-    {
-        //MsgQueryRTLSDR& conf = (MsgQueryRTLSDR&) message;
-        qDebug() << "RTLSDRInput::handleMessage: MsgQueryRTLSDR";
-
-        MsgReportRTLSDR *message = MsgReportRTLSDR::create(m_gains);
-        getOutputMessageQueueToGUI()->push(message);
 
         return true;
     }
@@ -321,11 +324,12 @@ bool RTLSDRInput::applySettings(const RTLSDRSettings& settings, bool force)
         {
             if (rtlsdr_set_freq_correction(m_dev, settings.m_loPpmCorrection) < 0)
             {
-                qCritical("could not set LO ppm correction: %d", settings.m_loPpmCorrection);
+                qCritical("RTLSDRInput::applySettings: could not set LO ppm correction: %d", settings.m_loPpmCorrection);
             }
             else
             {
                 m_settings.m_loPpmCorrection = settings.m_loPpmCorrection;
+                qDebug("RTLSDRInput::applySettings: LO ppm correction set to: %d", settings.m_loPpmCorrection);
             }
         }
     }
@@ -360,31 +364,36 @@ bool RTLSDRInput::applySettings(const RTLSDRSettings& settings, bool force)
         }
     }
 
-    qint64 deviceCenterFrequency = m_settings.m_centerFrequency;
-    qint64 f_img = deviceCenterFrequency;
-    quint32 devSampleRate =m_settings.m_devSampleRate;
-
     if (force || (m_settings.m_centerFrequency != settings.m_centerFrequency)
-            || (m_settings.m_fcPos != settings.m_fcPos))
+            || (m_settings.m_fcPos != settings.m_fcPos)
+            || (m_settings.m_transverterMode != settings.m_transverterMode)
+            || (m_settings.m_transverterDeltaFrequency != settings.m_transverterDeltaFrequency))
     {
         m_settings.m_centerFrequency = settings.m_centerFrequency;
+        m_settings.m_transverterMode = settings.m_transverterMode;
+        m_settings.m_transverterDeltaFrequency = settings.m_transverterDeltaFrequency;
+        qint64 deviceCenterFrequency = m_settings.m_centerFrequency;
+        deviceCenterFrequency -= m_settings.m_transverterMode ? m_settings.m_transverterDeltaFrequency : 0;
+        deviceCenterFrequency = deviceCenterFrequency < 0 ? 0 : deviceCenterFrequency;
+        qint64 f_img = deviceCenterFrequency;
+        quint32 devSampleRate = m_settings.m_devSampleRate;
+
         forwardChange = true;
 
         if ((m_settings.m_log2Decim == 0) || (settings.m_fcPos == RTLSDRSettings::FC_POS_CENTER))
         {
-            deviceCenterFrequency = m_settings.m_centerFrequency;
             f_img = deviceCenterFrequency;
         }
         else
         {
             if (settings.m_fcPos == RTLSDRSettings::FC_POS_INFRA)
             {
-                deviceCenterFrequency = m_settings.m_centerFrequency + (devSampleRate / 4);
+                deviceCenterFrequency += (devSampleRate / 4);
                 f_img = deviceCenterFrequency + devSampleRate/2;
             }
             else if (settings.m_fcPos == RTLSDRSettings::FC_POS_SUPRA)
             {
-                deviceCenterFrequency = m_settings.m_centerFrequency - (devSampleRate / 4);
+                deviceCenterFrequency -= (devSampleRate / 4);
                 f_img = deviceCenterFrequency - devSampleRate/2;
             }
         }
@@ -417,15 +426,38 @@ bool RTLSDRInput::applySettings(const RTLSDRSettings& settings, bool force)
         }
     }
 
+    if ((m_settings.m_noModMode != settings.m_noModMode) || force)
+    {
+        m_settings.m_noModMode = settings.m_noModMode;
+
+        // Direct Modes: 0: off, 1: I, 2: Q, 3: NoMod.
+        if (m_settings.m_noModMode) {
+            set_ds_mode(3);
+        } else {
+            set_ds_mode(0);
+        }
+    }
+
     if (forwardChange)
     {
         int sampleRate = m_settings.m_devSampleRate/(1<<m_settings.m_log2Decim);
         DSPSignalNotification *notif = new DSPSignalNotification(sampleRate, m_settings.m_centerFrequency);
         m_fileSink->handleMessage(*notif); // forward to file sink
-        m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+        m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
     }
 
     return true;
+}
+
+void RTLSDRInput::setMessageQueueToGUI(MessageQueue *queue)
+{
+    qDebug("RTLSDRInput::setMessageQueueToGUI: %p", queue);
+    DeviceSampleSource::setMessageQueueToGUI(queue);
+
+    if (queue) {
+        MsgReportRTLSDR *message = MsgReportRTLSDR::create(m_gains);
+        queue->push(message);
+    }
 }
 
 void RTLSDRInput::set_ds_mode(int on)

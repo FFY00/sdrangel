@@ -38,21 +38,19 @@ MESSAGE_CLASS_DEFINITION(SDRdaemonSourceInput::MsgReportSDRdaemonSourceStreamDat
 MESSAGE_CLASS_DEFINITION(SDRdaemonSourceInput::MsgReportSDRdaemonSourceStreamTiming, Message)
 MESSAGE_CLASS_DEFINITION(SDRdaemonSourceInput::MsgFileRecord, Message)
 
-SDRdaemonSourceInput::SDRdaemonSourceInput(const QTimer& masterTimer, DeviceSourceAPI *deviceAPI) :
+SDRdaemonSourceInput::SDRdaemonSourceInput(DeviceSourceAPI *deviceAPI) :
     m_deviceAPI(deviceAPI),
 	m_address("127.0.0.1"),
 	m_port(9090),
 	m_SDRdaemonUDPHandler(0),
 	m_deviceDescription(),
-	m_sampleRate(0),
-	m_centerFrequency(0),
 	m_startingTimeStamp(0),
-    m_masterTimer(masterTimer),
+    m_masterTimer(deviceAPI->getMasterTimer()),
     m_autoFollowRate(false),
     m_autoCorrBuffer(false)
 {
 	m_sampleFifo.setSize(96000 * 4);
-	m_SDRdaemonUDPHandler = new SDRdaemonSourceUDPHandler(&m_sampleFifo, getOutputMessageQueueToGUI(), m_deviceAPI);
+	m_SDRdaemonUDPHandler = new SDRdaemonSourceUDPHandler(&m_sampleFifo, &m_inputMessageQueue, m_deviceAPI);
 	m_SDRdaemonUDPHandler->connectTimer(&m_masterTimer);
 
     char recFileNameCStr[30];
@@ -67,6 +65,11 @@ SDRdaemonSourceInput::~SDRdaemonSourceInput()
     m_deviceAPI->removeSink(m_fileSink);
     delete m_fileSink;
 	delete m_SDRdaemonUDPHandler;
+}
+
+void SDRdaemonSourceInput::destroy()
+{
+    delete this;
 }
 
 bool SDRdaemonSourceInput::start()
@@ -91,12 +94,12 @@ const QString& SDRdaemonSourceInput::getDeviceDescription() const
 
 int SDRdaemonSourceInput::getSampleRate() const
 {
-	return m_sampleRate;
+	return m_settings.m_sampleRate;
 }
 
 quint64 SDRdaemonSourceInput::getCenterFrequency() const
 {
-	return m_centerFrequency;
+	return m_settings.m_centerFrequency;
 }
 
 std::time_t SDRdaemonSourceInput::getStartingTimeStamp() const
@@ -170,9 +173,36 @@ bool SDRdaemonSourceInput::handleMessage(const Message& message)
 	{
 		return true;
 	}
+	else if (MsgReportSDRdaemonSourceStreamData::match(message))
+	{
+	    // Forward message to the GUI if it is present
+	    if (getMessageQueueToGUI()) {
+	        getMessageQueueToGUI()->push(const_cast<Message*>(&message));
+	        return false; // deletion of message is handled by the GUI
+	    } else {
+	        return true; // delete the unused message
+	    }
+	}
+	else if (MsgReportSDRdaemonSourceStreamTiming::match(message))
+	{
+        // Forward message to the GUI if it is present
+        if (getMessageQueueToGUI()) {
+            getMessageQueueToGUI()->push(const_cast<Message*>(&message));
+            return false; // deletion of message is handled by the GUI
+        } else {
+            return true; // delete the unused message
+        }
+	}
 	else
 	{
 		return false;
 	}
+}
+
+void SDRdaemonSourceInput::setMessageQueueToGUI(MessageQueue *queue)
+{
+    qDebug("SDRdaemonSourceInput::setMessageQueueToGUI: %p", queue);
+    DeviceSampleSource::setMessageQueueToGUI(queue);
+    m_SDRdaemonUDPHandler->setMessageQueueToGUI(queue);
 }
 

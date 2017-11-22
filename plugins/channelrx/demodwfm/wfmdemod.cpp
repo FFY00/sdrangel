@@ -15,44 +15,44 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
-#include "../../channelrx/demodwfm/wfmdemod.h"
 
 #include <QTime>
 #include <QDebug>
 #include <stdio.h>
 #include <complex.h>
+
 #include <dsp/downchannelizer.h>
+#include "dsp/threadedbasebandsamplesink.h"
+#include <device/devicesourceapi.h>
 #include "audio/audiooutput.h"
 #include "dsp/dspengine.h"
 #include "dsp/pidcontroller.h"
 
-MESSAGE_CLASS_DEFINITION(WFMDemod::MsgConfigureWFMDemod, Message)
+#include "wfmdemod.h"
 
-WFMDemod::WFMDemod(BasebandSampleSink* sampleSink) :
+MESSAGE_CLASS_DEFINITION(WFMDemod::MsgConfigureWFMDemod, Message)
+MESSAGE_CLASS_DEFINITION(WFMDemod::MsgConfigureChannelizer, Message)
+
+const QString WFMDemod::m_channelID = "de.maintech.sdrangelove.channel.wfm";
+
+WFMDemod::WFMDemod(DeviceSourceAPI* deviceAPI) :
+    m_deviceAPI(deviceAPI),
+    m_absoluteFrequencyOffset(0),
     m_squelchOpen(false),
     m_magsq(0.0f),
     m_magsqSum(0.0f),
     m_magsqPeak(0.0f),
     m_magsqCount(0),
     m_movingAverage(40, 0),
-    m_sampleSink(sampleSink),
+    m_sampleSink(0),
     m_audioFifo(250000),
     m_settingsMutex(QMutex::Recursive)
 
 {
 	setObjectName("WFMDemod");
 
-	m_config.m_inputSampleRate = 384000;
-	m_config.m_inputFrequencyOffset = 0;
-	m_config.m_rfBandwidth = 180000;
-	m_config.m_afBandwidth = 15000;
-	m_config.m_squelch = -60.0;
-	m_config.m_volume = 2.0;
-	m_config.m_audioSampleRate = DSPEngine::instance()->getAudioSampleRate();
 	m_rfFilter = new fftfilt(-50000.0 / 384000.0, 50000.0 / 384000.0, rfFilterFftLength);
 	m_phaseDiscri.setFMScaling(384000/75000);
-
-	apply();
 
 	m_audioBuffer.resize(16384);
 	m_audioBufferFill = 0;
@@ -60,6 +60,13 @@ WFMDemod::WFMDemod(BasebandSampleSink* sampleSink) :
 	m_movingAverage.resize(16, 0);
 
 	DSPEngine::instance()->addAudioSink(&m_audioFifo);
+
+	m_channelizer = new DownChannelizer(this);
+    m_threadedChannelizer = new ThreadedBasebandSampleSink(m_channelizer, this);
+    m_deviceAPI->addThreadedSink(m_threadedChannelizer);
+    m_deviceAPI->addChannelAPI(this);
+
+	applySettings(m_settings, true);
 }
 
 WFMDemod::~WFMDemod()
@@ -70,18 +77,11 @@ WFMDemod::~WFMDemod()
 	}
 
 	DSPEngine::instance()->removeAudioSink(&m_audioFifo);
-}
 
-void WFMDemod::configure(
-        MessageQueue* messageQueue,
-        Real rfBandwidth,
-        Real afBandwidth,
-        Real volume,
-        Real squelch,
-        bool audioMute)
-{
-	Message* cmd = MsgConfigureWFMDemod::create(rfBandwidth, afBandwidth, volume, squelch, audioMute);
-	messageQueue->push(cmd);
+	m_deviceAPI->removeChannelAPI(this);
+	m_deviceAPI->removeThreadedSink(m_threadedChannelizer);
+    delete m_threadedChannelizer;
+    delete m_channelizer;
 }
 
 void WFMDemod::feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool firstOfBurst __attribute__((unused)))
@@ -119,7 +119,7 @@ void WFMDemod::feed(const SampleVector::const_iterator& begin, const SampleVecto
             m_magsqCount++;
 
 			if(m_movingAverage.average() >= m_squelchLevel)
-				m_squelchState = m_running.m_rfBandwidth / 20; // decay rate
+				m_squelchState = m_settings.m_rfBandwidth / 20; // decay rate
 
 			if (m_squelchState > 0)
 			{
@@ -132,7 +132,7 @@ void WFMDemod::feed(const SampleVector::const_iterator& begin, const SampleVecto
                 m_squelchOpen = false;
 			}
 
-            if (m_running.m_audioMute)
+            if (m_settings.m_audioMute)
             {
                 demod = 0;
             }
@@ -141,7 +141,7 @@ void WFMDemod::feed(const SampleVector::const_iterator& begin, const SampleVecto
 
 			if(m_interpolator.decimate(&m_interpolatorDistanceRemain, e, &ci))
 			{
-				quint16 sample = (qint16)(ci.real() * 3276.8f * m_running.m_volume);
+				quint16 sample = (qint16)(ci.real() * 3276.8f * m_settings.m_volume);
 				m_sampleBuffer.push_back(Sample(sample, sample));
 				m_audioBuffer[m_audioBufferFill].l = sample;
 				m_audioBuffer[m_audioBufferFill].r = sample;
@@ -203,36 +203,57 @@ bool WFMDemod::handleMessage(const Message& cmd)
 	{
 		DownChannelizer::MsgChannelizerNotification& notif = (DownChannelizer::MsgChannelizerNotification&) cmd;
 
-		m_config.m_inputSampleRate = notif.getSampleRate();
-		m_config.m_inputFrequencyOffset = notif.getFrequencyOffset();
+		WFMDemodSettings settings = m_settings;
 
-        qDebug() << "WFMDemod::handleMessage: MsgChannelizerNotification: m_inputSampleRate: " << m_config.m_inputSampleRate
-                << " m_inputFrequencyOffset: " << m_config.m_inputFrequencyOffset;
+        settings.m_inputSampleRate = notif.getSampleRate();
+        settings.m_inputFrequencyOffset = notif.getFrequencyOffset();
 
-		apply();
+        applySettings(settings);
 
-		return true;
-	}
-	else if (MsgConfigureWFMDemod::match(cmd))
-	{
-		MsgConfigureWFMDemod& cfg = (MsgConfigureWFMDemod&) cmd;
-
-		m_config.m_rfBandwidth = cfg.getRFBandwidth();
-		m_config.m_afBandwidth = cfg.getAFBandwidth();
-		m_config.m_volume = cfg.getVolume();
-		m_config.m_squelch = cfg.getSquelch();
-		m_config.m_audioMute = cfg.getAudioMute();
-
-        qDebug() << "WFMDemod::handleMessage: MsgConfigureWFMDemod: m_rfBandwidth: " << m_config.m_rfBandwidth
-                << " m_afBandwidth: " << m_config.m_afBandwidth
-                << " m_volume: " << m_config.m_volume
-                << " m_squelch: " << m_config.m_squelch
-                << " m_audioMute: " << m_config.m_audioMute;
-
-		apply();
+        qDebug() << "WFMDemod::handleMessage: MsgChannelizerNotification: m_inputSampleRate: " << settings.m_inputSampleRate
+                << " m_inputFrequencyOffset: " << settings.m_inputFrequencyOffset;
 
 		return true;
 	}
+    else if (MsgConfigureChannelizer::match(cmd))
+    {
+        MsgConfigureChannelizer& cfg = (MsgConfigureChannelizer&) cmd;
+
+        m_channelizer->configure(m_channelizer->getInputMessageQueue(),
+            cfg.getSampleRate(),
+            cfg.getCenterFrequency());
+
+        qDebug() << "WFMDemod::handleMessage: MsgConfigureChannelizer:"
+                << " sampleRate: " << cfg.getSampleRate()
+                << " inputFrequencyOffset: " << cfg.getCenterFrequency();
+
+        return true;
+    }
+    else if (MsgConfigureWFMDemod::match(cmd))
+    {
+        MsgConfigureWFMDemod& cfg = (MsgConfigureWFMDemod&) cmd;
+
+        WFMDemodSettings settings = cfg.getSettings();
+
+        // These settings are set with DownChannelizer::MsgChannelizerNotification
+        m_absoluteFrequencyOffset = settings.m_inputFrequencyOffset;
+        settings.m_inputSampleRate = m_settings.m_inputSampleRate;
+        settings.m_inputFrequencyOffset = m_settings.m_inputFrequencyOffset;
+
+        applySettings(settings, cfg.getForce());
+
+        qDebug() << "WFMDemod::handleMessage: MsgConfigureWFMDemod:"
+                << " m_rfBandwidth: " << settings.m_rfBandwidth
+                << " m_afBandwidth: " << settings.m_afBandwidth
+                << " m_volume: " << settings.m_volume
+                << " m_squelch: " << settings.m_squelch
+                << " m_copyAudioToUDP: " << settings.m_copyAudioToUDP
+                << " m_udpAddress: " << settings.m_udpAddress
+                << " m_udpPort: " << settings.m_udpPort
+                << " force: " << cfg.getForce();
+
+        return true;
+    }
 	else
 	{
 		if (m_sampleSink != 0)
@@ -246,49 +267,41 @@ bool WFMDemod::handleMessage(const Message& cmd)
 	}
 }
 
-void WFMDemod::apply()
+void WFMDemod::applySettings(const WFMDemodSettings& settings, bool force)
 {
+    if((settings.m_inputFrequencyOffset != m_settings.m_inputFrequencyOffset) ||
+        (settings.m_inputSampleRate != m_settings.m_inputSampleRate) || force)
+    {
+        qDebug() << "WFMDemod::applySettings: m_nco.setFreq";
+        m_nco.setFreq(-settings.m_inputFrequencyOffset, settings.m_inputSampleRate);
+    }
 
-	if((m_config.m_inputFrequencyOffset != m_running.m_inputFrequencyOffset) ||
-		(m_config.m_inputSampleRate != m_running.m_inputSampleRate))
-	{
-		qDebug() << "WFMDemod::apply: m_nco.setFreq";
-		m_nco.setFreq(-m_config.m_inputFrequencyOffset, m_config.m_inputSampleRate);
-	}
-
-	if((m_config.m_inputSampleRate != m_running.m_inputSampleRate) ||
-	    (m_config.m_audioSampleRate != m_running.m_audioSampleRate) ||
-		(m_config.m_afBandwidth != m_running.m_afBandwidth) ||
-		(m_config.m_rfBandwidth != m_running.m_rfBandwidth))
-	{
-		m_settingsMutex.lock();
-		qDebug() << "WFMDemod::apply: m_interpolator.create";
-		m_interpolator.create(16, m_config.m_inputSampleRate, m_config.m_afBandwidth);
-		m_interpolatorDistanceRemain = (Real) m_config.m_inputSampleRate / (Real) m_config.m_audioSampleRate;
-		m_interpolatorDistance =  (Real) m_config.m_inputSampleRate / (Real) m_config.m_audioSampleRate;
-        qDebug() << "WFMDemod::apply: m_rfFilter->create_filter";
-        Real lowCut = -(m_config.m_rfBandwidth / 2.0) / m_config.m_inputSampleRate;
-        Real hiCut  = (m_config.m_rfBandwidth / 2.0) / m_config.m_inputSampleRate;
+    if((settings.m_inputSampleRate != m_settings.m_inputSampleRate) ||
+        (settings.m_audioSampleRate != m_settings.m_audioSampleRate) ||
+        (settings.m_afBandwidth != m_settings.m_afBandwidth) ||
+        (settings.m_rfBandwidth != m_settings.m_rfBandwidth) || force)
+    {
+        m_settingsMutex.lock();
+        qDebug() << "WFMDemod::applySettings: m_interpolator.create";
+        m_interpolator.create(16, settings.m_inputSampleRate, settings.m_afBandwidth);
+        m_interpolatorDistanceRemain = (Real) settings.m_inputSampleRate / (Real) settings.m_audioSampleRate;
+        m_interpolatorDistance =  (Real) settings.m_inputSampleRate / (Real) settings.m_audioSampleRate;
+        qDebug() << "WFMDemod::applySettings: m_rfFilter->create_filter";
+        Real lowCut = -(settings.m_rfBandwidth / 2.0) / settings.m_inputSampleRate;
+        Real hiCut  = (settings.m_rfBandwidth / 2.0) / settings.m_inputSampleRate;
         m_rfFilter->create_filter(lowCut, hiCut);
-        m_fmExcursion = m_config.m_rfBandwidth / (Real) m_config.m_inputSampleRate;
+        m_fmExcursion = settings.m_rfBandwidth / (Real) settings.m_inputSampleRate;
         m_phaseDiscri.setFMScaling(1.0f/m_fmExcursion);
-        qDebug("WFMDemod::apply: m_fmExcursion: %f", m_fmExcursion);
-		m_settingsMutex.unlock();
-	}
+        qDebug("WFMDemod::applySettings: m_fmExcursion: %f", m_fmExcursion);
+        m_settingsMutex.unlock();
+    }
 
-	if(m_config.m_squelch != m_running.m_squelch)
-	{
-		qDebug() << "WFMDemod::apply: set m_squelchLevel";
-		m_squelchLevel = pow(10.0, m_config.m_squelch / 20.0);
-		m_squelchLevel *= m_squelchLevel;
-	}
+    if ((settings.m_squelch != m_settings.m_squelch) || force)
+    {
+        qDebug() << "WFMDemod::applySettings: set m_squelchLevel";
+        m_squelchLevel = pow(10.0, settings.m_squelch / 20.0);
+        m_squelchLevel *= m_squelchLevel;
+    }
 
-	m_running.m_inputSampleRate = m_config.m_inputSampleRate;
-	m_running.m_inputFrequencyOffset = m_config.m_inputFrequencyOffset;
-	m_running.m_rfBandwidth = m_config.m_rfBandwidth;
-	m_running.m_afBandwidth = m_config.m_afBandwidth;
-	m_running.m_squelch = m_config.m_squelch;
-	m_running.m_volume = m_config.m_volume;
-	m_running.m_audioSampleRate = m_config.m_audioSampleRate;
-	m_running.m_audioMute = m_config.m_audioMute;
+    m_settings = settings;
 }

@@ -20,6 +20,7 @@
 #include "amdemodgui.h"
 
 #include "device/devicesourceapi.h"
+#include "device/deviceuiset.h"
 #include "dsp/downchannelizer.h"
 
 #include "dsp/threadedbasebandsamplesink.h"
@@ -33,17 +34,15 @@
 
 #include "amdemod.h"
 
-const QString AMDemodGUI::m_channelID = "de.maintech.sdrangelove.channel.am";
-
-AMDemodGUI* AMDemodGUI::create(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI)
+AMDemodGUI* AMDemodGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
 {
-	AMDemodGUI* gui = new AMDemodGUI(pluginAPI, deviceAPI);
+	AMDemodGUI* gui = new AMDemodGUI(pluginAPI, deviceUISet, rxChannel);
 	return gui;
 }
 
 void AMDemodGUI::destroy()
 {
-	delete this; // TODO: is this really useful?
+	delete this;
 }
 
 void AMDemodGUI::setName(const QString& name)
@@ -68,83 +67,26 @@ void AMDemodGUI::setCenterFrequency(qint64 centerFrequency)
 
 void AMDemodGUI::resetToDefaults()
 {
-	blockApplySettings(true);
-
-	ui->rfBW->setValue(50);
-	ui->volume->setValue(20);
-	ui->squelch->setValue(-40);
-	ui->deltaFrequency->setValue(0);
-
-	blockApplySettings(false);
-	applySettings();
+    m_settings.resetToDefaults();
+    displaySettings();
+	applySettings(true);
 }
 
 QByteArray AMDemodGUI::serialize() const
 {
-	SimpleSerializer s(1);
-	s.writeS32(1, m_channelMarker.getCenterFrequency());
-	s.writeS32(2, ui->rfBW->value());
-	s.writeS32(4, ui->volume->value());
-	s.writeS32(5, ui->squelch->value());
-    s.writeBlob(6, m_channelMarker.serialize());
-	s.writeU32(7, m_channelMarker.getColor().rgb());
-	s.writeBool(8, ui->bandpassEnable->isChecked());
-	return s.final();
+    return m_settings.serialize();
 }
 
 bool AMDemodGUI::deserialize(const QByteArray& data)
 {
-	SimpleDeserializer d(data);
-
-	if(!d.isValid())
-    {
-		resetToDefaults();
-		return false;
-	}
-
-	if(d.getVersion() == 1)
-    {
-		QByteArray bytetmp;
-		quint32 u32tmp;
-		qint32 tmp;
-		bool boolTmp;
-		QString strtmp;
-
-		blockApplySettings(true);
-		m_channelMarker.blockSignals(true);
-
-        d.readBlob(6, &bytetmp);
-        m_channelMarker.deserialize(bytetmp);
-		d.readS32(1, &tmp, 0);
-		m_channelMarker.setCenterFrequency(tmp);
-		d.readS32(2, &tmp, 4);
-		ui->rfBW->setValue(tmp);
-		d.readS32(3, &tmp, 3);
-		//ui->afBW->setValue(tmp);
-		d.readS32(4, &tmp, 20);
-		ui->volume->setValue(tmp);
-		d.readS32(5, &tmp, -40);
-		ui->squelch->setValue(tmp);
-        if(d.readU32(7, &u32tmp)) {
-			m_channelMarker.setColor(u32tmp);
-        }
-        d.readBool(8, &boolTmp, false);
-        ui->bandpassEnable->setChecked(boolTmp);
-
-        this->setWindowTitle(m_channelMarker.getTitle());
-        displayUDPAddress();
-
-        blockApplySettings(false);
-		m_channelMarker.blockSignals(false);
-
-		applySettings(true);
-		return true;
-	}
-    else
-    {
-		resetToDefaults();
-		return false;
-	}
+    if(m_settings.deserialize(data)) {
+        displaySettings();
+        applySettings(true);
+        return true;
+    } else {
+        resetToDefaults();
+        return false;
+    }
 }
 
 bool AMDemodGUI::handleMessage(const Message& message __attribute__((unused)))
@@ -152,20 +94,28 @@ bool AMDemodGUI::handleMessage(const Message& message __attribute__((unused)))
 	return false;
 }
 
-void AMDemodGUI::channelMarkerChanged()
+void AMDemodGUI::channelMarkerChangedByCursor()
 {
-    this->setWindowTitle(m_channelMarker.getTitle());
-    displayUDPAddress();
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
 	applySettings();
+}
+
+void AMDemodGUI::channelMarkerHighlightedByCursor()
+{
+    setHighlighted(m_channelMarker.getHighlighted());
 }
 
 void AMDemodGUI::on_deltaFrequency_changed(qint64 value)
 {
     m_channelMarker.setCenterFrequency(value);
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    applySettings();
 }
 
-void AMDemodGUI::on_bandpassEnable_toggled(bool checked __attribute__((unused)))
+void AMDemodGUI::on_bandpassEnable_toggled(bool checked)
 {
+    m_settings.m_bandpassEnable = checked;
     applySettings();
 }
 
@@ -173,28 +123,33 @@ void AMDemodGUI::on_rfBW_valueChanged(int value)
 {
 	ui->rfBWText->setText(QString("%1 kHz").arg(value / 10.0, 0, 'f', 1));
 	m_channelMarker.setBandwidth(value * 100);
+	m_settings.m_rfBandwidth = value * 100;
 	applySettings();
 }
 
 void AMDemodGUI::on_volume_valueChanged(int value)
 {
 	ui->volumeText->setText(QString("%1").arg(value / 10.0, 0, 'f', 1));
+	m_settings.m_volume = value / 10.0;
 	applySettings();
 }
 
 void AMDemodGUI::on_squelch_valueChanged(int value)
 {
 	ui->squelchText->setText(QString("%1 dB").arg(value));
+	m_settings.m_squelch = value;
 	applySettings();
 }
 
-void AMDemodGUI::on_audioMute_toggled(bool checked __attribute__((unused)))
+void AMDemodGUI::on_audioMute_toggled(bool checked)
 {
+    m_settings.m_audioMute = checked;
 	applySettings();
 }
 
-void AMDemodGUI::on_copyAudioToUDP_toggled(bool checked __attribute__((unused)))
+void AMDemodGUI::on_copyAudioToUDP_toggled(bool checked)
 {
+    m_settings.m_copyAudioToUDP = checked;
     applySettings();
 }
 
@@ -211,13 +166,25 @@ void AMDemodGUI::onMenuDialogCalled(const QPoint &p)
     BasicChannelSettingsDialog dialog(&m_channelMarker, this);
     dialog.move(p);
     dialog.exec();
+
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    m_settings.m_udpAddress = m_channelMarker.getUDPAddress(),
+    m_settings.m_udpPort =  m_channelMarker.getUDPSendPort(),
+    m_settings.m_rgbColor = m_channelMarker.getColor().rgb();
+    m_settings.m_title = m_channelMarker.getTitle();
+
+    setWindowTitle(m_settings.m_title);
+    setTitleColor(m_settings.m_rgbColor);
+    displayUDPAddress();
+
+    applySettings();
 }
 
-AMDemodGUI::AMDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidget* parent) :
+AMDemodGUI::AMDemodGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel, QWidget* parent) :
 	RollupWidget(parent),
 	ui(new Ui::AMDemodGUI),
 	m_pluginAPI(pluginAPI),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
 	m_channelMarker(this),
 	m_doApplySettings(true),
 	m_squelchOpen(false),
@@ -228,46 +195,43 @@ AMDemodGUI::AMDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidget
 	connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
     connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(onMenuDialogCalled(const QPoint &)));
 
-	m_amDemod = new AMDemod();
-	m_channelizer = new DownChannelizer(m_amDemod);
-	m_threadedChannelizer = new ThreadedBasebandSampleSink(m_channelizer, this);
-	//m_pluginAPI->addThreadedSink(m_threadedChannelizer);
-    m_deviceAPI->addThreadedSink(m_threadedChannelizer);
+	m_amDemod = (AMDemod*) rxChannel; //new AMDemod(m_deviceUISet->m_deviceSourceAPI);
 
-	connect(&m_pluginAPI->getMainWindow()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick())); // 50 ms
+	connect(&MainWindow::getInstance()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick())); // 50 ms
 
     ui->deltaFrequencyLabel->setText(QString("%1f").arg(QChar(0x94, 0x03)));
     ui->deltaFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
     ui->deltaFrequency->setValueRange(false, 7, -9999999, 9999999);
 	ui->channelPowerMeter->setColorTheme(LevelMeterSignalDB::ColorGreenAndBlue);
 
-	//m_channelMarker = new ChannelMarker(this);
+	m_channelMarker.blockSignals(true);
 	m_channelMarker.setColor(Qt::yellow);
 	m_channelMarker.setBandwidth(5000);
 	m_channelMarker.setCenterFrequency(0);
     m_channelMarker.setTitle("AM Demodulator");
     m_channelMarker.setUDPAddress("127.0.0.1");
     m_channelMarker.setUDPSendPort(9999);
-    m_channelMarker.setVisible(true);
+    m_channelMarker.blockSignals(false);
+    m_channelMarker.setVisible(true); // activate signal on the last setting only
+
     setTitleColor(m_channelMarker.getColor());
+    m_settings.setChannelMarker(&m_channelMarker);
 
-	connect(&m_channelMarker, SIGNAL(changed()), this, SLOT(channelMarkerChanged()));
+    m_deviceUISet->registerRxChannelInstance(AMDemod::m_channelID, this);
+	m_deviceUISet->addChannelMarker(&m_channelMarker);
+	m_deviceUISet->addRollupWidget(this);
 
-	m_deviceAPI->registerChannelInstance(m_channelID, this);
-    m_deviceAPI->addChannelMarker(&m_channelMarker);
-    m_deviceAPI->addRollupWidget(this);
+	connect(&m_channelMarker, SIGNAL(changedByCursor()), this, SLOT(channelMarkerChangedByCursor()));
+    connect(&m_channelMarker, SIGNAL(highlightedByCursor()), this, SLOT(channelMarkerHighlightedByCursor()));
 
+	displaySettings();
 	applySettings(true);
 }
 
 AMDemodGUI::~AMDemodGUI()
 {
-    m_deviceAPI->removeChannelInstance(this);
-	m_deviceAPI->removeThreadedSink(m_threadedChannelizer);
-	delete m_threadedChannelizer;
-	delete m_channelizer;
-	delete m_amDemod;
-	//delete m_channelMarker;
+    m_deviceUISet->removeRxChannelInstance(this);
+	delete m_amDemod; // TODO: check this: when the GUI closes it has to delete the demodulator
 	delete ui;
 }
 
@@ -280,44 +244,63 @@ void AMDemodGUI::applySettings(bool force)
 {
 	if (m_doApplySettings)
 	{
-		setTitleColor(m_channelMarker.getColor());
+		AMDemod::MsgConfigureChannelizer* channelConfigMsg = AMDemod::MsgConfigureChannelizer::create(
+		        48000, m_channelMarker.getCenterFrequency());
+		m_amDemod->getInputMessageQueue()->push(channelConfigMsg);
 
-		m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-			48000,
-			m_channelMarker.getCenterFrequency());
 
-		ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
-
-		m_amDemod->configure(m_amDemod->getInputMessageQueue(),
-			ui->rfBW->value() * 100.0,
-			ui->volume->value() / 10.0,
-			ui->squelch->value(),
-			ui->audioMute->isChecked(),
-			ui->bandpassEnable->isChecked(),
-			ui->copyAudioToUDP->isChecked(),
-			m_channelMarker.getUDPAddress(),
-			m_channelMarker.getUDPSendPort(),
-			force);
+	    AMDemod::MsgConfigureAMDemod* message = AMDemod::MsgConfigureAMDemod::create( m_settings, force);
+	    m_amDemod->getInputMessageQueue()->push(message);
 	}
+}
+
+void AMDemodGUI::displaySettings()
+{
+    m_channelMarker.blockSignals(true);
+    m_channelMarker.setCenterFrequency(m_settings.m_inputFrequencyOffset);
+    m_channelMarker.setBandwidth(m_settings.m_rfBandwidth);
+    m_channelMarker.setTitle(m_settings.m_title);
+    m_channelMarker.blockSignals(false);
+    m_channelMarker.setColor(m_settings.m_rgbColor); // activate signal on the last setting only
+
+    setTitleColor(m_settings.m_rgbColor);
+    setWindowTitle(m_channelMarker.getTitle());
+    displayUDPAddress();
+
+    blockApplySettings(true);
+
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+
+    int displayValue = m_settings.m_rfBandwidth/100.0;
+    ui->rfBW->setValue(displayValue);
+    ui->rfBWText->setText(QString("%1 kHz").arg(displayValue / 10.0, 0, 'f', 1));
+
+    ui->volume->setValue(m_settings.m_volume * 10.0);
+    ui->volumeText->setText(QString("%1").arg(m_settings.m_volume, 0, 'f', 1));
+
+    ui->squelch->setValue(m_settings.m_squelch);
+    ui->squelchText->setText(QString("%1 dB").arg(m_settings.m_squelch));
+
+    ui->audioMute->setChecked(m_settings.m_audioMute);
+    ui->bandpassEnable->setChecked(m_settings.m_bandpassEnable);
+    ui->copyAudioToUDP->setChecked(m_settings.m_copyAudioToUDP);
+
+    blockApplySettings(false);
 }
 
 void AMDemodGUI::displayUDPAddress()
 {
-    ui->copyAudioToUDP->setToolTip(QString("Copy audio output to UDP %1:%2").arg(m_channelMarker.getUDPAddress()).arg(m_channelMarker.getUDPSendPort()));
+    ui->copyAudioToUDP->setToolTip(QString("Copy audio output to UDP %1:%2").arg(m_settings.m_udpAddress).arg(m_settings.m_udpPort));
 }
 
 void AMDemodGUI::leaveEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(false);
-	blockApplySettings(false);
 }
 
 void AMDemodGUI::enterEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(true);
-	blockApplySettings(false);
 }
 
 void AMDemodGUI::tick()

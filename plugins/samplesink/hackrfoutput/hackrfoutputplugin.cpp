@@ -29,7 +29,7 @@
 
 const PluginDescriptor HackRFOutputPlugin::m_pluginDescriptor = {
 	QString("HackRF Output"),
-	QString("3.5.5"),
+	QString("3.8.0"),
 	QString("(c) Edouard Griffiths, F4EXB"),
 	QString("https://github.com/f4exb/sdrangel"),
 	true,
@@ -97,7 +97,11 @@ PluginInterface::SamplingDevices HackRFOutputPlugin::enumSampleSinks()
 			        m_hardwareID,
 			        m_deviceTypeID,
 					serial_str,
-					i));
+					i,
+					PluginInterface::SamplingDevice::PhysicalDevice,
+					false,
+					1,
+					0));
 
 			qDebug("HackRFOutputPlugin::enumSampleSinks: enumerated HackRF device #%d", i);
 
@@ -116,11 +120,14 @@ PluginInterface::SamplingDevices HackRFOutputPlugin::enumSampleSinks()
 	return result;
 }
 
-PluginInstanceUI* HackRFOutputPlugin::createSampleSinkPluginInstanceUI(const QString& sinkId, QWidget **widget, DeviceSinkAPI *deviceAPI)
+PluginInstanceGUI* HackRFOutputPlugin::createSampleSinkPluginInstanceGUI(
+        const QString& sinkId,
+        QWidget **widget,
+        DeviceUISet *deviceUISet)
 {
 	if(sinkId == m_deviceTypeID)
 	{
-		HackRFOutputGui* gui = new HackRFOutputGui(deviceAPI);
+		HackRFOutputGui* gui = new HackRFOutputGui(deviceUISet);
 		*widget = gui;
 		return gui;
 	}
@@ -129,3 +136,19 @@ PluginInstanceUI* HackRFOutputPlugin::createSampleSinkPluginInstanceUI(const QSt
 		return 0;
 	}
 }
+
+DeviceSampleSink* HackRFOutputPlugin::createSampleSinkPluginInstanceOutput(const QString& sinkId, DeviceSinkAPI *deviceAPI)
+{
+    if(sinkId == m_deviceTypeID)
+    {
+        HackRFOutput* output = new HackRFOutput(deviceAPI);
+        return output;
+    }
+    else
+    {
+        return 0;
+    }
+
+}
+
+

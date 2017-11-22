@@ -34,18 +34,21 @@ public:
 
 	public:
 		const AirspySettings& getSettings() const { return m_settings; }
+		bool getForce() const { return m_force; }
 
-		static MsgConfigureAirspy* create(const AirspySettings& settings)
+		static MsgConfigureAirspy* create(const AirspySettings& settings, bool force)
 		{
-			return new MsgConfigureAirspy(settings);
+			return new MsgConfigureAirspy(settings, force);
 		}
 
 	private:
 		AirspySettings m_settings;
+		bool m_force;
 
-		MsgConfigureAirspy(const AirspySettings& settings) :
+		MsgConfigureAirspy(const AirspySettings& settings, bool force) :
 			Message(),
-			m_settings(settings)
+			m_settings(settings),
+			m_force(force)
 		{ }
 	};
 
@@ -68,28 +71,9 @@ public:
         { }
     };
 
-//	class MsgReportAirspy : public Message {
-//		MESSAGE_CLASS_DECLARATION
-//
-//	public:
-//		const std::vector<uint32_t>& getSampleRates() const { return m_sampleRates; }
-//
-//		static MsgReportAirspy* create(const std::vector<uint32_t>& sampleRates)
-//		{
-//			return new MsgReportAirspy(sampleRates);
-//		}
-//
-//	protected:
-//		std::vector<uint32_t> m_sampleRates;
-//
-//		MsgReportAirspy(const std::vector<uint32_t>& sampleRates) :
-//			Message(),
-//			m_sampleRates(sampleRates)
-//		{ }
-//	};
-
 	AirspyInput(DeviceSourceAPI *deviceAPI);
 	virtual ~AirspyInput();
+	virtual void destroy();
 
 	virtual bool start();
 	virtual void stop();
@@ -100,6 +84,9 @@ public:
 	const std::vector<uint32_t>& getSampleRates() const { return m_sampleRates; }
 
 	virtual bool handleMessage(const Message& message);
+
+	static const qint64 loLowLimitFreq;
+	static const qint64 loHighLimitFreq;
 
 private:
 	bool openDevice();

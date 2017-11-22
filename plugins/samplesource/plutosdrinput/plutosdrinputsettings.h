@@ -24,7 +24,8 @@ struct PlutoSDRInputSettings {
 	typedef enum {
 		FC_POS_INFRA = 0,
 		FC_POS_SUPRA,
-		FC_POS_CENTER
+		FC_POS_CENTER,
+		FC_POS_END
 	} fcPos_t;
 
     enum RFPath
@@ -70,6 +71,8 @@ struct PlutoSDRInputSettings {
     quint32 m_gain;            //!< "hardware" gain
     RFPath  m_antennaPath;
     GainMode m_gainMode;
+    bool m_transverterMode;
+    qint64 m_transverterDeltaFrequency;
 
 
 	PlutoSDRInputSettings();

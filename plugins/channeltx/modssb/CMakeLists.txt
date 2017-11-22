@@ -4,12 +4,14 @@ set(modssb_SOURCES
     ssbmod.cpp
     ssbmodgui.cpp
     ssbmodplugin.cpp
+    ssbmodsettings.cpp
 )
 
 set(modssb_HEADERS
     ssbmod.h
     ssbmodgui.h
     ssbmodplugin.h
+    ssbmodsettings.h
 )
 
 set(modssb_FORMS
@@ -36,6 +38,7 @@ add_library(modssb SHARED
 target_link_libraries(modssb
     ${QT_LIBRARIES}
     sdrbase
+    sdrgui
 )
 
 qt5_use_modules(modssb Core Widgets)

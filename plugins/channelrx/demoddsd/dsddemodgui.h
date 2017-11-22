@@ -18,19 +18,20 @@
 #ifndef INCLUDE_DSDDEMODGUI_H
 #define INCLUDE_DSDDEMODGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QMenu>
 
 #include "gui/rollupwidget.h"
 #include "dsp/dsptypes.h"
 #include "dsp/channelmarker.h"
 #include "dsp/movingaverage.h"
+#include "util/messagequeue.h"
+
+#include "dsddemodsettings.h"
 
 class PluginAPI;
-class DeviceSourceAPI;
-
-class ThreadedBasebandSampleSink;
-class DownChannelizer;
+class DeviceUISet;
+class BasebandSampleSink;
 class ScopeVis;
 class DSDDemod;
 
@@ -38,12 +39,12 @@ namespace Ui {
 	class DSDDemodGUI;
 }
 
-class DSDDemodGUI : public RollupWidget, public PluginInstanceUI {
+class DSDDemodGUI : public RollupWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
-	static DSDDemodGUI* create(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI);
-	void destroy();
+	static DSDDemodGUI* create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel);
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -53,33 +54,12 @@ public:
 	void resetToDefaults();
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
-
+	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 
-	static const QString m_channelID;
-
-private slots:
-	void formatStatusText();
-	void channelMarkerChanged();
-	void on_deltaFrequency_changed(qint64 value);
-	void on_rfBW_valueChanged(int index);
-	void on_demodGain_valueChanged(int value);
-    void on_volume_valueChanged(int value);
-    void on_baudRate_currentIndexChanged(int index);
-    void on_enableCosineFiltering_toggled(bool enable);
-    void on_syncOrConstellation_toggled(bool checked);
-    void on_slot1On_toggled(bool checked);
-    void on_slot2On_toggled(bool checked);
-    void on_tdmaStereoSplit_toggled(bool checked);
-	void on_fmDeviation_valueChanged(int value);
-	void on_squelchGate_valueChanged(int value);
-	void on_squelch_valueChanged(int value);
-    void on_audioMute_toggled(bool checked);
-    void on_symbolPLLLock_toggled(bool checked);
-    void on_udpOutput_toggled(bool checked);
-	void onWidgetRolled(QWidget* widget, bool rollDown);
-	void onMenuDialogCalled(const QPoint& p);
-	void tick();
+public slots:
+	void channelMarkerChangedByCursor();
+    void channelMarkerHighlightedByCursor();
 
 private:
 	typedef enum
@@ -93,14 +73,13 @@ private:
 
 	Ui::DSDDemodGUI* ui;
 	PluginAPI* m_pluginAPI;
-	DeviceSourceAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
 	ChannelMarker m_channelMarker;
+	DSDDemodSettings m_settings;
 	bool m_doApplySettings;
 	char m_formatStatusText[82+1]; //!< Fixed signal format dependent status text
 	SignalFormat m_signalFormat;
 
-	ThreadedBasebandSampleSink* m_threadedChannelizer;
-	DownChannelizer* m_channelizer;
     ScopeVis* m_scopeVis;
 
 	DSDDemod* m_dsdDemod;
@@ -116,30 +95,41 @@ private:
 	float m_myLatitude;
 	float m_myLongitude;
 
-	explicit DSDDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidget* parent = NULL);
+	MessageQueue m_inputMessageQueue;
+
+	explicit DSDDemodGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel, QWidget* parent = 0);
 	virtual ~DSDDemodGUI();
 
 	void blockApplySettings(bool block);
 	void applySettings(bool force = false);
+    void displaySettings();
 	void updateMyPosition();
 	void displayUDPAddress();
 
 	void leaveEvent(QEvent*);
 	void enterEvent(QEvent*);
-};
 
-class DSDDemodBaudRates
-{
-public:
-    static unsigned int getRate(unsigned int rate_index);
-    static unsigned int getRateIndex(unsigned int rate);
-    static unsigned int getDefaultRate() { return m_rates[m_defaultRateIndex]; }
-    static unsigned int getDefaultRateIndex() { return m_defaultRateIndex; }
-    static unsigned int getNbRates();
-private:
-    static unsigned int m_nb_rates;
-    static unsigned int m_rates[2];
-    static unsigned int m_defaultRateIndex;
+private slots:
+    void formatStatusText();
+    void on_deltaFrequency_changed(qint64 value);
+    void on_rfBW_valueChanged(int index);
+    void on_demodGain_valueChanged(int value);
+    void on_volume_valueChanged(int value);
+    void on_baudRate_currentIndexChanged(int index);
+    void on_enableCosineFiltering_toggled(bool enable);
+    void on_syncOrConstellation_toggled(bool checked);
+    void on_slot1On_toggled(bool checked);
+    void on_slot2On_toggled(bool checked);
+    void on_tdmaStereoSplit_toggled(bool checked);
+    void on_fmDeviation_valueChanged(int value);
+    void on_squelchGate_valueChanged(int value);
+    void on_squelch_valueChanged(int value);
+    void on_audioMute_toggled(bool checked);
+    void on_symbolPLLLock_toggled(bool checked);
+    void on_udpOutput_toggled(bool checked);
+    void onWidgetRolled(QWidget* widget, bool rollDown);
+    void onMenuDialogCalled(const QPoint& p);
+    void tick();
 };
 
 #endif // INCLUDE_DSDDEMODGUI_H

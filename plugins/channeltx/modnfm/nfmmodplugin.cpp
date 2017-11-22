@@ -23,7 +23,7 @@
 
 const PluginDescriptor NFMModPlugin::m_pluginDescriptor = {
     QString("NFM Modulator"),
-    QString("3.5.4"),
+    QString("3.8.4"),
     QString("(c) Edouard Griffiths, F4EXB"),
     QString("https://github.com/f4exb/sdrangel"),
     true,
@@ -46,21 +46,27 @@ void NFMModPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI = pluginAPI;
 
 	// register AM modulator
-	m_pluginAPI->registerTxChannel(NFMModGUI::m_channelID, this);
+	m_pluginAPI->registerTxChannel(NFMMod::m_channelID, this);
 }
 
-PluginInstanceUI* NFMModPlugin::createTxChannel(const QString& channelName, DeviceSinkAPI *deviceAPI)
+PluginInstanceGUI* NFMModPlugin::createTxChannelGUI(const QString& channelName, DeviceUISet *deviceUISet, BasebandSampleSource *txChannel)
 {
-	if(channelName == NFMModGUI::m_channelID)
+	if(channelName == NFMMod::m_channelID)
 	{
-	    NFMModGUI* gui = NFMModGUI::create(m_pluginAPI, deviceAPI);
+	    NFMModGUI* gui = NFMModGUI::create(m_pluginAPI, deviceUISet, txChannel);
 		return gui;
 	} else {
 		return 0;
 	}
 }
 
-void NFMModPlugin::createInstanceModNFM(DeviceSinkAPI *deviceAPI)
+BasebandSampleSource* NFMModPlugin::createTxChannel(const QString& channelName, DeviceSinkAPI *deviceAPI)
 {
-    NFMModGUI::create(m_pluginAPI, deviceAPI);
+    if(channelName == NFMMod::m_channelID)
+    {
+        NFMMod* source = new NFMMod(deviceAPI);
+        return source;
+    } else {
+        return 0;
+    }
 }

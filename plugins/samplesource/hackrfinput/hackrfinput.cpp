@@ -63,6 +63,11 @@ HackRFInput::~HackRFInput()
 	m_deviceAPI->setBuddySharedPtr(0);
 }
 
+void HackRFInput::destroy()
+{
+    delete this;
+}
+
 bool HackRFInput::openDevice()
 {
     if (m_dev != 0)
@@ -250,14 +255,10 @@ bool HackRFInput::applySettings(const HackRFInputSettings& settings, bool force)
 
 	qDebug() << "HackRFInput::applySettings";
 
-	if (m_settings.m_dcBlock != settings.m_dcBlock)
+	if ((m_settings.m_dcBlock != settings.m_dcBlock) ||
+	    (m_settings.m_iqCorrection != settings.m_iqCorrection) || force)
 	{
 		m_settings.m_dcBlock = settings.m_dcBlock;
-		m_deviceAPI->configureCorrections(m_settings.m_dcBlock, m_settings.m_iqCorrection);
-	}
-
-	if (m_settings.m_iqCorrection != settings.m_iqCorrection)
-	{
 		m_settings.m_iqCorrection = settings.m_iqCorrection;
 		m_deviceAPI->configureCorrections(m_settings.m_dcBlock, m_settings.m_iqCorrection);
 	}
@@ -307,8 +308,16 @@ bool HackRFInput::applySettings(const HackRFInputSettings& settings, bool force)
 	    if (m_settings.m_linkTxFrequency && (m_deviceAPI->getSinkBuddies().size() > 0))
 	    {
 	        DeviceSinkAPI *buddy = m_deviceAPI->getSinkBuddies()[0];
-	        DeviceHackRFShared::MsgConfigureFrequencyDelta *deltaMsg = DeviceHackRFShared::MsgConfigureFrequencyDelta::create(settings.m_centerFrequency - m_settings.m_centerFrequency);
-	        buddy->getDeviceOutputMessageQueue()->push(deltaMsg);
+            DeviceHackRFShared::MsgConfigureFrequencyDelta *deltaMsg = DeviceHackRFShared::MsgConfigureFrequencyDelta::create(
+                    settings.m_centerFrequency - m_settings.m_centerFrequency);
+
+	        if (buddy->getSampleSinkGUIMessageQueue())
+	        {
+	            DeviceHackRFShared::MsgConfigureFrequencyDelta *deltaMsgToGUI = new DeviceHackRFShared::MsgConfigureFrequencyDelta(*deltaMsg);
+                buddy->getSampleSinkGUIMessageQueue()->push(deltaMsgToGUI);
+	        }
+
+	        buddy->getSampleSinkInputMessageQueue()->push(deltaMsg);
 	    }
 	}
 
@@ -464,7 +473,7 @@ bool HackRFInput::applySettings(const HackRFInputSettings& settings, bool force)
 		int sampleRate = devSampleRate/(1<<m_settings.m_log2Decim);
 		DSPSignalNotification *notif = new DSPSignalNotification(sampleRate, m_settings.m_centerFrequency);
         m_fileSink->handleMessage(*notif); // forward to file sink
-        m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+        m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
 	}
 
 	m_settings.m_linkTxFrequency = settings.m_linkTxFrequency;

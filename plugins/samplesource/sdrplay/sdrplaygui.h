@@ -17,28 +17,30 @@
 #ifndef PLUGINS_SAMPLESOURCE_SDRPLAY_SDRPLAYGUI_H_
 #define PLUGINS_SAMPLESOURCE_SDRPLAY_SDRPLAYGUI_H_
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QWidget>
-
 #include <vector>
+
+#include "util/messagequeue.h"
+
 #include "sdrplayinput.h"
 #include "sdrplaysettings.h"
 
-class DeviceSampleSource;
 class DeviceSourceAPI;
+class DeviceUISet;
 
 namespace Ui {
     class SDRPlayGui;
 }
 
-class SDRPlayGui : public QWidget, public PluginInstanceUI {
+class SDRPlayGui : public QWidget, public PluginInstanceGUI {
     Q_OBJECT
 
 public:
-    explicit SDRPlayGui(DeviceSourceAPI *deviceAPI, QWidget* parent = NULL);
+    explicit SDRPlayGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
     virtual ~SDRPlayGui();
-    void destroy();
+    virtual void destroy();
 
     void setName(const QString& name);
     QString getName() const;
@@ -48,12 +50,14 @@ public:
     virtual void setCenterFrequency(qint64 centerFrequency);
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
+    virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
     virtual bool handleMessage(const Message& message);
 
 private:
     Ui::SDRPlayGui* ui;
 
-    DeviceSourceAPI* m_deviceAPI;
+    DeviceUISet* m_deviceUISet;
+    bool m_forceSettings;
     SDRPlaySettings m_settings;
     QTimer m_updateTimer;
     QTimer m_statusTimer;
@@ -61,6 +65,7 @@ private:
     int m_sampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
     int m_lastEngineState;
+    MessageQueue m_inputMessageQueue;
 
     void displaySettings();
     void sendSettings();
@@ -69,8 +74,7 @@ private:
 private slots:
     void updateHardware();
     void updateStatus();
-    void handleSourceMessages();
-    void handleDSPMessages();
+    void handleInputMessages();
     void on_centerFrequency_changed(quint64 value);
     void on_ppm_valueChanged(int value);
     void on_dcOffset_toggled(bool checked);

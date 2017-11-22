@@ -21,10 +21,11 @@
 #include "plugin/pluginapi.h"
 
 #include "udpsrcgui.h"
+#include "udpsrc.h"
 
 const PluginDescriptor UDPSrcPlugin::m_pluginDescriptor = {
 	QString("UDP Channel Source"),
-	QString("3.6.1"),
+	QString("3.8.2"),
 	QString("(c) Edouard Griffiths, F4EXB"),
 	QString("https://github.com/f4exb/sdrangel"),
 	true,
@@ -47,14 +48,14 @@ void UDPSrcPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI = pluginAPI;
 
 	// register TCP Channel Source
-	m_pluginAPI->registerRxChannel(UDPSrcGUI::m_channelID, this);
+	m_pluginAPI->registerRxChannel(UDPSrc::m_channelID, this);
 }
 
-PluginInstanceUI* UDPSrcPlugin::createRxChannel(const QString& channelName, DeviceSourceAPI *deviceAPI)
+PluginInstanceGUI* UDPSrcPlugin::createRxChannelGUI(const QString& channelName, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
 {
-	if(channelName == UDPSrcGUI::m_channelID)
+	if(channelName == UDPSrc::m_channelID)
 	{
-		UDPSrcGUI* gui = UDPSrcGUI::create(m_pluginAPI, deviceAPI);
+		UDPSrcGUI* gui = UDPSrcGUI::create(m_pluginAPI, deviceUISet, rxChannel);
 //		deviceAPI->registerChannelInstance("sdrangel.channel.udpsrc", gui);
 //		m_pluginAPI->addChannelRollup(gui);
 		return gui;
@@ -63,9 +64,13 @@ PluginInstanceUI* UDPSrcPlugin::createRxChannel(const QString& channelName, Devi
 	}
 }
 
-void UDPSrcPlugin::createInstanceUDPSrc(DeviceSourceAPI *deviceAPI)
+BasebandSampleSink* UDPSrcPlugin::createRxChannel(const QString& channelName, DeviceSourceAPI *deviceAPI)
 {
-	UDPSrcGUI::create(m_pluginAPI, deviceAPI);
-//	deviceAPI->registerChannelInstance("sdrangel.channel.udpsrc", gui);
-//	m_pluginAPI->addChannelRollup(gui);
+    if(channelName == UDPSrc::m_channelID)
+    {
+        UDPSrc* sink = new UDPSrc(deviceAPI);
+        return sink;
+    } else {
+        return 0;
+    }
 }

@@ -17,25 +17,27 @@
 #ifndef INCLUDE_FCDGUI_H
 #define INCLUDE_FCDGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QWidget>
 
+#include "util/messagequeue.h"
+
 #include "fcdproplusinput.h"
 
-class DeviceSourceAPI;
+class DeviceUISet;
 
 namespace Ui {
 	class FCDProPlusGui;
 }
 
-class FCDProPlusGui : public QWidget, public PluginInstanceUI {
+class FCDProPlusGui : public QWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
-	explicit FCDProPlusGui(DeviceSourceAPI *deviceAPI, QWidget* parent = NULL);
+	explicit FCDProPlusGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
 	virtual ~FCDProPlusGui();
-	void destroy();
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -45,13 +47,14 @@ public:
 	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
-
+	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::FCDProPlusGui* ui;
 
-	DeviceSourceAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
+	bool m_forceSettings;
 	FCDProPlusSettings m_settings;
 	QTimer m_updateTimer;
 	QTimer m_statusTimer;
@@ -60,13 +63,15 @@ private:
     int m_sampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
 	int m_lastEngineState;
+	MessageQueue m_inputMessageQueue;
 
 	void displaySettings();
 	void sendSettings();
 	void updateSampleRateAndFrequency();
+    void updateFrequencyLimits();
 
 private slots:
-    void handleDSPMessages();
+    void handleInputMessages();
 	void on_centerFrequency_changed(quint64 value);
 	void on_dcOffset_toggled(bool checked);
 	void on_iqImbalance_toggled(bool checked);
@@ -79,6 +84,7 @@ private slots:
 	void on_ppm_valueChanged(int value);
 	void on_startStop_toggled(bool checked);
 	void on_record_toggled(bool checked);
+    void on_transverter_clicked();
 	void updateHardware();
 	void updateStatus();
 };

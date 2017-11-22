@@ -21,11 +21,11 @@
 #include "util/simpleserializer.h"
 #include "dsp/dspcommands.h"
 #include "dsp/dspengine.h"
+#include "dsp/filerecord.h"
+#include "device/devicesourceapi.h"
+
 #include "filesourcegui.h"
 #include "filesourceinput.h"
-
-#include <dsp/filerecord.h>
-
 #include "filesourcethread.h"
 
 MESSAGE_CLASS_DEFINITION(FileSourceInput::MsgConfigureFileSource, Message)
@@ -72,7 +72,8 @@ bool FileSourceInput::Settings::deserialize(const QByteArray& data)
 	}
 }
 
-FileSourceInput::FileSourceInput(const QTimer& masterTimer) :
+FileSourceInput::FileSourceInput(DeviceSourceAPI *deviceAPI) :
+    m_deviceAPI(deviceAPI),
 	m_settings(),
 	m_fileSourceThread(NULL),
 	m_deviceDescription(),
@@ -80,14 +81,19 @@ FileSourceInput::FileSourceInput(const QTimer& masterTimer) :
 	m_sampleRate(0),
 	m_centerFrequency(0),
 	m_recordLength(0),
-	m_startingTimeStamp(0),
-	m_masterTimer(masterTimer)
+    m_startingTimeStamp(0),
+    m_masterTimer(deviceAPI->getMasterTimer())
 {
 }
 
 FileSourceInput::~FileSourceInput()
 {
 	stop();
+}
+
+void FileSourceInput::destroy()
+{
+    delete this;
 }
 
 void FileSourceInput::openFileStream()
@@ -122,7 +128,10 @@ void FileSourceInput::openFileStream()
 			m_centerFrequency,
 			m_startingTimeStamp,
 			m_recordLength); // file stream data
-	getOutputMessageQueueToGUI()->push(report);
+
+	if (getMessageQueueToGUI()) {
+	    getMessageQueueToGUI()->push(report);
+	}
 }
 
 void FileSourceInput::seekFileStream(int seekPercentage)
@@ -172,7 +181,10 @@ bool FileSourceInput::start()
 	qDebug("FileSourceInput::startInput: started");
 
 	MsgReportFileSourceAcquisition *report = MsgReportFileSourceAcquisition::create(true); // acquisition on
-	getOutputMessageQueueToGUI()->push(report);
+
+	if (getMessageQueueToGUI()) {
+        getMessageQueueToGUI()->push(report);
+	}
 
 	return true;
 }
@@ -192,7 +204,10 @@ void FileSourceInput::stop()
 	m_deviceDescription.clear();
 
 	MsgReportFileSourceAcquisition *report = MsgReportFileSourceAcquisition::create(false); // acquisition off
-	getOutputMessageQueueToGUI()->push(report);
+
+	if (getMessageQueueToGUI()) {
+        getMessageQueueToGUI()->push(report);
+	}
 }
 
 const QString& FileSourceInput::getDeviceDescription() const
@@ -262,7 +277,10 @@ bool FileSourceInput::handleMessage(const Message& message)
 		if (m_fileSourceThread != 0)
 		{
 			report = MsgReportFileSourceStreamTiming::create(m_fileSourceThread->getSamplesCount());
-			getOutputMessageQueueToGUI()->push(report);
+
+			if (getMessageQueueToGUI()) {
+                getMessageQueueToGUI()->push(report);
+			}
 		}
 
 		return true;

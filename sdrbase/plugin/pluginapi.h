@@ -5,33 +5,41 @@
 #include <QList>
 
 #include "util/export.h"
+#include "plugin/plugininterface.h"
 
 class QString;
 
 class PluginManager;
-class PluginInterface;
-class MainWindow;
 class MessageQueue;
-class PluginInstanceUI;
+class PluginInstanceGUI;
 
 class SDRANGEL_API PluginAPI : public QObject {
 	Q_OBJECT
 
 public:
+    struct SamplingDeviceRegistration //!< This is the device registration
+    {
+        QString m_deviceId;
+        PluginInterface* m_plugin;
+        SamplingDeviceRegistration(const QString& deviceId, PluginInterface* plugin) :
+            m_deviceId(deviceId),
+            m_plugin(plugin)
+        { }
+    };
+
+    typedef QList<SamplingDeviceRegistration> SamplingDeviceRegistrations;
+
     struct ChannelRegistration
     {
-        QString m_channelName;
+        QString m_channelId;       //!< Channel or device type ID
         PluginInterface* m_plugin;
-        ChannelRegistration(const QString& channelName, PluginInterface* plugin) :
-            m_channelName(channelName),
+        ChannelRegistration(const QString& channelId, PluginInterface* plugin) :
+            m_channelId(channelId),
             m_plugin(plugin)
         { }
     };
 
     typedef QList<ChannelRegistration> ChannelRegistrations;
-
-	// MainWindow access
-	MessageQueue* getMainWindowMessageQueue();
 
 	// Rx Channel stuff
 	void registerRxChannel(const QString& channelName, PluginInterface* plugin);
@@ -47,14 +55,10 @@ public:
 	// Sample Sink stuff
 	void registerSampleSink(const QString& sinkName, PluginInterface* plugin);
 
-	// R/O access to main window
-	const MainWindow* getMainWindow() const { return m_mainWindow; }
-
 protected:
 	PluginManager* m_pluginManager;
-	MainWindow* m_mainWindow;
 
-	PluginAPI(PluginManager* pluginManager, MainWindow* mainWindow);
+	PluginAPI(PluginManager* pluginManager);
 	~PluginAPI();
 
 	friend class PluginManager;

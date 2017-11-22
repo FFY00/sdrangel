@@ -1,35 +1,111 @@
 #ifndef INCLUDE_TCPSRC_H
 #define INCLUDE_TCPSRC_H
 
-#include <dsp/basebandsamplesink.h>
 #include <QMutex>
 #include <QHostAddress>
+
+#include "dsp/basebandsamplesink.h"
+#include "channel/channelsinkapi.h"
 #include "dsp/nco.h"
 #include "dsp/fftfilt.h"
 #include "dsp/interpolator.h"
 #include "util/message.h"
+
+#include "tcpsrcsettings.h"
 
 #define tcpFftLen 2048
 
 class QTcpServer;
 class QTcpSocket;
 class TCPSrcGUI;
+class DeviceSourceAPI;
+class ThreadedBasebandSampleSink;
+class DownChannelizer;
 
-class TCPSrc : public BasebandSampleSink {
+class TCPSrc : public BasebandSampleSink, public ChannelSinkAPI {
 	Q_OBJECT
 
 public:
-	enum SampleFormat {
-		FormatSSB,
-		FormatNFM,
-		FormatS16LE,
-		FormatNone
-	};
+    class MsgConfigureTCPSrc : public Message {
+        MESSAGE_CLASS_DECLARATION
 
-	TCPSrc(MessageQueue* uiMessageQueue, TCPSrcGUI* tcpSrcGUI, BasebandSampleSink* spectrum);
+    public:
+        const TCPSrcSettings& getSettings() const { return m_settings; }
+        bool getForce() const { return m_force; }
+
+        static MsgConfigureTCPSrc* create(const TCPSrcSettings& settings, bool force)
+        {
+            return new MsgConfigureTCPSrc(settings, force);
+        }
+
+    private:
+        TCPSrcSettings m_settings;
+        bool m_force;
+
+        MsgConfigureTCPSrc(const TCPSrcSettings& settings, bool force) :
+            Message(),
+            m_settings(settings),
+            m_force(force)
+        {
+        }
+    };
+
+    class MsgConfigureChannelizer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int getSampleRate() const { return m_sampleRate; }
+        int getCenterFrequency() const { return m_centerFrequency; }
+
+        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
+        {
+            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
+        }
+
+    private:
+        int m_sampleRate;
+        int  m_centerFrequency;
+
+        MsgConfigureChannelizer(int sampleRate, int centerFrequency) :
+            Message(),
+            m_sampleRate(sampleRate),
+            m_centerFrequency(centerFrequency)
+        { }
+    };
+
+    class MsgTCPSrcConnection : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        bool getConnect() const { return m_connect; }
+        quint32 getID() const { return m_id; }
+        const QHostAddress& getPeerAddress() const { return m_peerAddress; }
+        int getPeerPort() const { return m_peerPort; }
+
+        static MsgTCPSrcConnection* create(bool connect, quint32 id, const QHostAddress& peerAddress, int peerPort)
+        {
+            return new MsgTCPSrcConnection(connect, id, peerAddress, peerPort);
+        }
+
+    private:
+        bool m_connect;
+        quint32 m_id;
+        QHostAddress m_peerAddress;
+        int m_peerPort;
+
+        MsgTCPSrcConnection(bool connect, quint32 id, const QHostAddress& peerAddress, int peerPort) :
+            Message(),
+            m_connect(connect),
+            m_id(id),
+            m_peerAddress(peerAddress),
+            m_peerPort(peerPort)
+        { }
+    };
+
+	TCPSrc(DeviceSourceAPI* m_deviceAPI);
 	virtual ~TCPSrc();
+	void setSpectrum(BasebandSampleSink* spectrum) { m_spectrum = spectrum; }
 
-	void configure(MessageQueue* messageQueue, SampleFormat sampleFormat, Real outputSampleRate, Real rfBandwidth, int tcpPort, int boost);
 	void setSpectrum(MessageQueue* messageQueue, bool enabled);
 	double getMagSq() const { return m_magsq; }
 
@@ -38,67 +114,13 @@ public:
 	virtual void stop();
 	virtual bool handleMessage(const Message& cmd);
 
-	class MsgTCPSrcConnection : public Message {
-		MESSAGE_CLASS_DECLARATION
+    virtual int getDeltaFrequency() const { return m_absoluteFrequencyOffset; }
+    virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual void getTitle(QString& title) { title = m_settings.m_title; }
 
-	public:
-		bool getConnect() const { return m_connect; }
-		quint32 getID() const { return m_id; }
-		const QHostAddress& getPeerAddress() const { return m_peerAddress; }
-		int getPeerPort() const { return m_peerPort; }
-
-		static MsgTCPSrcConnection* create(bool connect, quint32 id, const QHostAddress& peerAddress, int peerPort)
-		{
-			return new MsgTCPSrcConnection(connect, id, peerAddress, peerPort);
-		}
-
-	private:
-		bool m_connect;
-		quint32 m_id;
-		QHostAddress m_peerAddress;
-		int m_peerPort;
-
-		MsgTCPSrcConnection(bool connect, quint32 id, const QHostAddress& peerAddress, int peerPort) :
-			Message(),
-			m_connect(connect),
-			m_id(id),
-			m_peerAddress(peerAddress),
-			m_peerPort(peerPort)
-		{ }
-	};
+    static const QString m_channelID;
 
 protected:
-	class MsgTCPSrcConfigure : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		SampleFormat getSampleFormat() const { return m_sampleFormat; }
-		Real getOutputSampleRate() const { return m_outputSampleRate; }
-		Real getRFBandwidth() const { return m_rfBandwidth; }
-		int getTCPPort() const { return m_tcpPort; }
-		int getBoost() const { return m_boost; }
-
-		static MsgTCPSrcConfigure* create(SampleFormat sampleFormat, Real sampleRate, Real rfBandwidth, int tcpPort, int boost)
-		{
-			return new MsgTCPSrcConfigure(sampleFormat, sampleRate, rfBandwidth, tcpPort, boost);
-		}
-
-	private:
-		SampleFormat m_sampleFormat;
-		Real m_outputSampleRate;
-		Real m_rfBandwidth;
-		int m_tcpPort;
-		int m_boost;
-
-		MsgTCPSrcConfigure(SampleFormat sampleFormat, Real outputSampleRate, Real rfBandwidth, int tcpPort, int boost) :
-			Message(),
-			m_sampleFormat(sampleFormat),
-			m_outputSampleRate(outputSampleRate),
-			m_rfBandwidth(rfBandwidth),
-			m_tcpPort(tcpPort),
-			m_boost(boost)
-		{ }
-	};
 	class MsgTCPSrcSpectrum : public Message {
 		MESSAGE_CLASS_DECLARATION
 
@@ -138,16 +160,20 @@ protected:
 		{ }
 	};
 
-	MessageQueue* m_uiMessageQueue;
-	TCPSrcGUI* m_tcpSrcGUI;
+	DeviceSourceAPI* m_deviceAPI;
+    ThreadedBasebandSampleSink* m_threadedChannelizer;
+    DownChannelizer* m_channelizer;
 
-	int m_inputSampleRate;
+    TCPSrcSettings m_settings;
+    int m_absoluteFrequencyOffset;
+
+    int m_inputSampleRate;
 
 	int m_sampleFormat;
 	Real m_outputSampleRate;
 	Real m_rfBandwidth;
 	int m_tcpPort;
-	int m_boost;
+	int m_volume;
 	double m_magsq;
 
 	Real m_scale;

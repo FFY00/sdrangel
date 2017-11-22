@@ -23,6 +23,7 @@
 #include <fstream>
 
 #include "dsp/basebandsamplesource.h"
+#include "channel/channelsourceapi.h"
 #include "dsp/basebandsamplesink.h"
 #include "dsp/ncof.h"
 #include "dsp/interpolator.h"
@@ -33,7 +34,13 @@
 #include "audio/audiofifo.h"
 #include "util/message.h"
 
-class SSBMod : public BasebandSampleSource {
+#include "ssbmodsettings.h"
+
+class DeviceSinkAPI;
+class ThreadedBasebandSampleSource;
+class UpChannelizer;
+
+class SSBMod : public BasebandSampleSource, public ChannelSourceAPI {
     Q_OBJECT
 
 public:
@@ -45,6 +52,52 @@ public:
         SSBModInputAudio,
         SSBModInputCWTone
     } SSBModInputAF;
+
+    class MsgConfigureSSBMod : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        const SSBModSettings& getSettings() const { return m_settings; }
+        bool getForce() const { return m_force; }
+
+        static MsgConfigureSSBMod* create(const SSBModSettings& settings, bool force)
+        {
+            return new MsgConfigureSSBMod(settings, force);
+        }
+
+    private:
+        SSBModSettings m_settings;
+        bool m_force;
+
+        MsgConfigureSSBMod(const SSBModSettings& settings, bool force) :
+            Message(),
+            m_settings(settings),
+            m_force(force)
+        { }
+    };
+
+    class MsgConfigureChannelizer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int getSampleRate() const { return m_sampleRate; }
+        int getCenterFrequency() const { return m_centerFrequency; }
+
+        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
+        {
+            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
+        }
+
+    private:
+        int m_sampleRate;
+        int  m_centerFrequency;
+
+        MsgConfigureChannelizer(int sampleRate, int centerFrequency) :
+            Message(),
+            m_sampleRate(sampleRate),
+            m_centerFrequency(centerFrequency)
+        { }
+    };
 
     class MsgConfigureFileSourceName : public Message
     {
@@ -174,26 +227,10 @@ public:
 
     //=================================================================
 
-    SSBMod(BasebandSampleSink* sampleSink);
+    SSBMod(DeviceSinkAPI *deviceAPI);
     ~SSBMod();
 
-    void configure(MessageQueue* messageQueue,
-            Real bandwidth,
-			Real lowCutoff,
-            float toneFrequency,
-			float volumeFactor,
-			int spanLog2,
-			bool audioBinaural,
-			bool audioFlipChannels,
-			bool dsb,
-			bool audioMute,
-            bool playLoop,
-            bool agc,
-            float agcOrder,
-            int agcTime,
-            int agcThreshold,
-            int agcThresholdGate,
-            int agcThresholdDelay);
+    void setSpectrumSampleSink(BasebandSampleSink* sampleSink) { m_sampleSink = sampleSink; }
 
     virtual void pull(Sample& sample);
     virtual void pullAudio(int nbSamples);
@@ -201,9 +238,15 @@ public:
     virtual void stop();
     virtual bool handleMessage(const Message& cmd);
 
+    virtual int getDeltaFrequency() const { return m_absoluteFrequencyOffset; }
+    virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual void getTitle(QString& title) { title = m_settings.m_title; }
+
     double getMagSq() const { return m_magsq; }
 
     CWKeyer *getCWKeyer() { return &m_cwKeyer; }
+
+    static const QString m_channelID;
 
 signals:
 	/**
@@ -216,178 +259,17 @@ signals:
 
 
 private:
-    class MsgConfigureSSBMod : public Message
-    {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        Real getBandwidth() const { return m_bandwidth; }
-        Real getLowCutoff() const { return m_lowCutoff; }
-        float getToneFrequency() const { return m_toneFrequency; }
-        float getVolumeFactor() const { return m_volumeFactor; }
-        int getSpanLog2() const { return m_spanLog2; }
-        bool getAudioBinaural() const { return m_audioBinaural; }
-        bool getAudioFlipChannels() const { return m_audioFlipChannels; }
-        bool getDSB() const { return m_dsb; }
-        bool getAudioMute() const { return m_audioMute; }
-        bool getPlayLoop() const { return m_playLoop; }
-        bool getAGC() const { return m_agc; }
-        float getAGCOrder() const { return m_agcOrder; }
-        int getAGCTime() const { return m_agcTime; }
-        int getAGCThreshold() const { return m_agcThreshold; }
-        int getAGCThresholdGate() const { return m_agcThresholdGate; }
-        int getAGCThresholdDelay() const { return m_agcThresholdDelay; }
-
-        static MsgConfigureSSBMod* create(Real bandwidth,
-        		Real lowCutoff,
-        		float toneFrequency,
-				float volumeFactor,
-				int spanLog2,
-				bool audioBinaural,
-				bool audioFlipChannels,
-				bool dsb,
-				bool audioMute,
-				bool playLoop,
-				bool agc,
-				float agcOrder,
-				int agcTime,
-                int agcThreshold,
-                int agcThresholdGate,
-                int agcThresholdDelay)
-        {
-            return new MsgConfigureSSBMod(bandwidth,
-            		lowCutoff,
-					toneFrequency,
-					volumeFactor,
-					spanLog2,
-					audioBinaural,
-					audioFlipChannels,
-					dsb,
-					audioMute,
-					playLoop,
-					agc,
-					agcOrder,
-					agcTime,
-					agcThreshold,
-					agcThresholdGate,
-					agcThresholdDelay);
-        }
-
-    private:
-        Real m_bandwidth;
-        Real m_lowCutoff;
-        float m_toneFrequency;
-        float m_volumeFactor;
-		int  m_spanLog2;
-		bool m_audioBinaural;
-		bool m_audioFlipChannels;
-		bool m_dsb;
-        bool m_audioMute;
-        bool m_playLoop;
-        bool m_agc;
-        float m_agcOrder;
-        int m_agcTime;
-        int m_agcThreshold;
-        int m_agcThresholdGate;
-        int m_agcThresholdDelay;
-
-        MsgConfigureSSBMod(Real bandwidth,
-        		Real lowCutoff,
-        		float toneFrequency,
-				float volumeFactor,
-				int spanLog2,
-				bool audioBinaural,
-				bool audioFlipChannels,
-				bool dsb,
-				bool audioMute,
-				bool playLoop,
-				bool agc,
-				float agcOrder,
-				int agcTime,
-				int agcThreshold,
-				int agcThresholdGate,
-				int agcThresholdDelay) :
-            Message(),
-            m_bandwidth(bandwidth),
-			m_lowCutoff(lowCutoff),
-            m_toneFrequency(toneFrequency),
-            m_volumeFactor(volumeFactor),
-			m_spanLog2(spanLog2),
-			m_audioBinaural(audioBinaural),
-			m_audioFlipChannels(audioFlipChannels),
-			m_dsb(dsb),
-            m_audioMute(audioMute),
-			m_playLoop(playLoop),
-			m_agc(agc),
-			m_agcOrder(agcOrder),
-			m_agcTime(agcTime),
-			m_agcThreshold(agcThreshold),
-			m_agcThresholdGate(agcThresholdGate),
-			m_agcThresholdDelay(agcThresholdDelay)
-        { }
-    };
-
-    //=================================================================
-
     enum RateState {
         RSInitialFill,
         RSRunning
     };
 
-    struct Config {
-        int m_basebandSampleRate;
-        int m_outputSampleRate;
-        qint64 m_inputFrequencyOffset;
-        Real m_bandwidth;
-        Real m_lowCutoff;
-        bool m_usb;
-        float m_toneFrequency;
-        float m_volumeFactor;
-        quint32 m_audioSampleRate;
-		int  m_spanLog2;
-		bool m_audioBinaural;
-		bool m_audioFlipChannels;
-		bool m_dsb;
-		bool m_audioMute;
-        bool m_playLoop;
-        bool m_agc;
-        float m_agcOrder;
-        int m_agcTime;
-        bool m_agcThresholdEnable;
-        double m_agcThreshold;
-        int m_agcThresholdGate;
-        int m_agcThresholdDelay;
+    DeviceSinkAPI* m_deviceAPI;
+    ThreadedBasebandSampleSource* m_threadedChannelizer;
+    UpChannelizer* m_channelizer;
 
-        Config() :
-            m_basebandSampleRate(0),
-            m_outputSampleRate(0),
-            m_inputFrequencyOffset(0),
-            m_bandwidth(3000.0f),
-			m_lowCutoff(300.0f),
-			m_usb(true),
-            m_toneFrequency(1000.0f),
-            m_volumeFactor(1.0f),
-            m_audioSampleRate(0),
-			m_spanLog2(3),
-			m_audioBinaural(false),
-			m_audioFlipChannels(false),
-			m_dsb(false),
-            m_audioMute(false),
-			m_playLoop(false),
-			m_agc(false),
-			m_agcOrder(0.2),
-			m_agcTime(9600),
-			m_agcThresholdEnable(true),
-			m_agcThreshold(1e-4),
-			m_agcThresholdGate(192),
-			m_agcThresholdDelay(2400)
-        { }
-    };
-
-    //=================================================================
-
-    Config m_config;
-    Config m_running;
+    SSBModSettings m_settings;
+    int m_absoluteFrequencyOffset;
 
     NCOF m_carrierNco;
     NCOF m_toneNco;
@@ -407,10 +289,6 @@ private:
 	BasebandSampleSink* m_sampleSink;
 	SampleVector m_sampleBuffer;
 
-//    Real m_magsqSpectrum;
-//    Real m_magsqSum;
-//    Real m_magsqPeak;
-//    int  m_magsqCount;
     fftfilt::cmplx m_sum;
     int m_undersampleCount;
     int m_sumCount;
@@ -435,13 +313,12 @@ private:
     Real m_peakLevel;
     Real m_levelSum;
     CWKeyer m_cwKeyer;
-    CWSmoother m_cwSmoother;
 
     MagAGC m_inAGC;
 
     static const int m_levelNbSamples;
 
-    void apply();
+    void applySettings(const SSBModSettings& settings, bool force = false);
     void pullAF(Complex& sample);
     void calculateLevel(Complex& sample);
     void modulateSample();

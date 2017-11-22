@@ -27,28 +27,29 @@
 #include "dsp/dspcommands.h"
 #include "device/devicesourceapi.h"
 #include "device/devicesinkapi.h"
+#include "device/deviceuiset.h"
 #include "hackrf/devicehackrfvalues.h"
 
 #include "ui_hackrfinputgui.h"
 
-HackRFInputGui::HackRFInputGui(DeviceSourceAPI *deviceAPI, QWidget* parent) :
+HackRFInputGui::HackRFInputGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	QWidget(parent),
 	ui(new Ui::HackRFInputGui),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
 	m_settings(),
 	m_forceSettings(true),
+	m_doApplySettings(true),
 	m_sampleSource(NULL),
 	m_lastEngineState((DSPDeviceSourceEngine::State)-1)
 {
-    m_sampleSource = new HackRFInput(m_deviceAPI);
-    m_deviceAPI->setSource(m_sampleSource);
+    m_sampleSource = (HackRFInput*) m_deviceUISet->m_deviceSourceAPI->getSampleSource();
 
     ui->setupUi(this);
 	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
 	ui->centerFrequency->setValueRange(7, 0U, 7250000U);
 
     ui->sampleRate->setColorMapper(ColorMapper(ColorMapper::GrayGreenYellow));
-    ui->sampleRate->setValueRange(8, 2400000U, 20000000U);
+    ui->sampleRate->setValueRange(8, 2600000U, 20000000U);
 
 	connect(&m_updateTimer, SIGNAL(timeout()), this, SLOT(updateHardware()));
 	connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
@@ -57,14 +58,13 @@ HackRFInputGui::HackRFInputGui(DeviceSourceAPI *deviceAPI, QWidget* parent) :
 	displaySettings();
 	displayBandwidths();
 
-    connect(m_deviceAPI->getDeviceOutputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleDSPMessages()), Qt::QueuedConnection);
+	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 
     sendSettings();
 }
 
 HackRFInputGui::~HackRFInputGui()
 {
-	delete m_sampleSource; // Valgrind memcheck
 	delete ui;
 }
 
@@ -136,36 +136,45 @@ bool HackRFInputGui::handleMessage(const Message& message)
     }
 }
 
-void HackRFInputGui::handleDSPMessages()
+void HackRFInputGui::handleInputMessages()
 {
     Message* message;
 
-    while ((message = m_deviceAPI->getDeviceOutputMessageQueue()->pop()) != 0)
+    while ((message = m_inputMessageQueue.pop()) != 0)
     {
-        qDebug("HackRFGui::handleDSPMessages: message: %s", message->getIdentifier());
+        qDebug("HackRFGui::handleInputMessages: message: %s", message->getIdentifier());
 
         if (DSPSignalNotification::match(*message))
         {
             DSPSignalNotification* notif = (DSPSignalNotification*) message;
             m_sampleRate = notif->getSampleRate();
             m_deviceCenterFrequency = notif->getCenterFrequency();
-            qDebug("HackRFGui::handleDSPMessages: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
+            qDebug("HackRFGui::handleInputMessages: DSPSignalNotification: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
             updateSampleRateAndFrequency();
 
             delete message;
+        }
+        else
+        {
+            if (handleMessage(*message))
+            {
+                delete message;
+            }
         }
     }
 }
 
 void HackRFInputGui::updateSampleRateAndFrequency()
 {
-    m_deviceAPI->getSpectrum()->setSampleRate(m_sampleRate);
-    m_deviceAPI->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
+    m_deviceUISet->getSpectrum()->setSampleRate(m_sampleRate);
+    m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
     ui->deviceRateText->setText(QString("%1k").arg(QString::number(m_sampleRate/1000.0, 'g', 5)));
 }
 
 void HackRFInputGui::displaySettings()
 {
+    blockApplySettings(true);
+
 	ui->centerFrequency->setValue(m_settings.m_centerFrequency / 1000);
 
 	ui->LOppm->setValue(m_settings.m_LOppmTenths);
@@ -191,6 +200,8 @@ void HackRFInputGui::displaySettings()
 
 	ui->vgaText->setText(tr("%1dB").arg(m_settings.m_vgaGain));
 	ui->vga->setValue(m_settings.m_vgaGain);
+
+	blockApplySettings(false);
 }
 
 void HackRFInputGui::displayBandwidths()
@@ -325,21 +336,21 @@ void HackRFInputGui::on_startStop_toggled(bool checked)
     if (checked)
     {
         // forcibly stop the Tx if present before starting
-        if (m_deviceAPI->getSinkBuddies().size() > 0)
+        if (m_deviceUISet->m_deviceSourceAPI->getSinkBuddies().size() > 0)
         {
-            DeviceSinkAPI *buddy = m_deviceAPI->getSinkBuddies()[0];
+            DeviceSinkAPI *buddy = m_deviceUISet->m_deviceSourceAPI->getSinkBuddies()[0];
             buddy->stopGeneration();
         }
 
-        if (m_deviceAPI->initAcquisition())
+        if (m_deviceUISet->m_deviceSourceAPI->initAcquisition())
         {
-            m_deviceAPI->startAcquisition();
+            m_deviceUISet->m_deviceSourceAPI->startAcquisition();
             DSPEngine::instance()->startAudioOutput();
         }
     }
     else
     {
-        m_deviceAPI->stopAcquisition();
+        m_deviceUISet->m_deviceSourceAPI->stopAcquisition();
         DSPEngine::instance()->stopAudioOutput();
     }
 }
@@ -358,16 +369,24 @@ void HackRFInputGui::on_record_toggled(bool checked)
 
 void HackRFInputGui::updateHardware()
 {
-	qDebug() << "HackRFGui::updateHardware";
-	HackRFInput::MsgConfigureHackRF* message = HackRFInput::MsgConfigureHackRF::create(m_settings, m_forceSettings);
-	m_sampleSource->getInputMessageQueue()->push(message);
-    m_forceSettings = false;
-	m_updateTimer.stop();
+    if (m_doApplySettings)
+    {
+        qDebug() << "HackRFGui::updateHardware";
+        HackRFInput::MsgConfigureHackRF* message = HackRFInput::MsgConfigureHackRF::create(m_settings, m_forceSettings);
+        m_sampleSource->getInputMessageQueue()->push(message);
+        m_forceSettings = false;
+        m_updateTimer.stop();
+    }
+}
+
+void HackRFInputGui::blockApplySettings(bool block)
+{
+    m_doApplySettings = !block;
 }
 
 void HackRFInputGui::updateStatus()
 {
-    int state = m_deviceAPI->state();
+    int state = m_deviceUISet->m_deviceSourceAPI->state();
 
     if(m_lastEngineState != state)
     {
@@ -385,7 +404,7 @@ void HackRFInputGui::updateStatus()
                 break;
             case DSPDeviceSourceEngine::StError:
                 ui->startStop->setStyleSheet("QToolButton { background-color : red; }");
-                QMessageBox::information(this, tr("Message"), m_deviceAPI->errorMessage());
+                QMessageBox::information(this, tr("Message"), m_deviceUISet->m_deviceSourceAPI->errorMessage());
                 break;
             default:
                 break;

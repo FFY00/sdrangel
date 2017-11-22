@@ -7,8 +7,9 @@
 #include <QMutex>
 #include "httpglobal.h"
 #include "httpconnectionhandler.h"
+#include "httplistenersettings.h"
 
-namespace stefanfrings {
+namespace qtwebapp {
 
 /**
   Pool of http connection handlers. The size of the pool grows and
@@ -58,16 +59,33 @@ public:
     */
     HttpConnectionHandlerPool(QSettings* settings, HttpRequestHandler* requestHandler);
 
+    /**
+      Constructor.
+      @param settings Configuration settings for the HTTP server as structure
+      @param requestHandler The handler that will process each received HTTP request.
+      @warning The requestMapper gets deleted by the destructor of this pool
+    */
+    HttpConnectionHandlerPool(const HttpListenerSettings* settings, HttpRequestHandler* requestHandler);
+
     /** Destructor */
     virtual ~HttpConnectionHandlerPool();
 
     /** Get a free connection handler, or 0 if not available. */
     HttpConnectionHandler* getConnectionHandler();
 
+    /**
+     * Get a listener settings const reference. Can be changed on the HttpListener only.
+     * @return The current listener settings
+     */
+    const HttpListenerSettings* getListenerSettings() const { return listenerSettings; }
+
 private:
 
-    /** Settings for this pool */
+    /** Settings for this pool as Qt settings*/
     QSettings* settings;
+
+    /** Settings for this pool as structure*/
+    const HttpListenerSettings *listenerSettings;
 
     /** Will be assigned to each Connectionhandler during their creation */
     HttpRequestHandler* requestHandler;
@@ -86,6 +104,9 @@ private:
 
     /** Load SSL configuration */
     void loadSslConfig();
+
+    /** Settings flag */
+    bool useQtSettings;
 
 private slots:
 

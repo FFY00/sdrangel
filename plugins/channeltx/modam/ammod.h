@@ -23,6 +23,7 @@
 #include <fstream>
 
 #include "dsp/basebandsamplesource.h"
+#include "channel/channelsourceapi.h"
 #include "dsp/nco.h"
 #include "dsp/ncof.h"
 #include "dsp/interpolator.h"
@@ -32,10 +33,62 @@
 #include "audio/audiofifo.h"
 #include "util/message.h"
 
-class AMMod : public BasebandSampleSource {
+#include "ammodsettings.h"
+
+class ThreadedBasebandSampleSource;
+class UpChannelizer;
+class DeviceSinkAPI;
+
+class AMMod : public BasebandSampleSource, public ChannelSourceAPI {
     Q_OBJECT
 
 public:
+    class MsgConfigureAMMod : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        const AMModSettings& getSettings() const { return m_settings; }
+        bool getForce() const { return m_force; }
+
+        static MsgConfigureAMMod* create(const AMModSettings& settings, bool force)
+        {
+            return new MsgConfigureAMMod(settings, force);
+        }
+
+    private:
+        AMModSettings m_settings;
+        bool m_force;
+
+        MsgConfigureAMMod(const AMModSettings& settings, bool force) :
+            Message(),
+            m_settings(settings),
+            m_force(force)
+        { }
+    };
+
+    class MsgConfigureChannelizer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int getSampleRate() const { return m_sampleRate; }
+        int getCenterFrequency() const { return m_centerFrequency; }
+
+        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
+        {
+            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
+        }
+
+    private:
+        int m_sampleRate;
+        int  m_centerFrequency;
+
+        MsgConfigureChannelizer(int sampleRate, int centerFrequency) :
+            Message(),
+            m_sampleRate(sampleRate),
+            m_centerFrequency(centerFrequency)
+        { }
+    };
+
     typedef enum
     {
         AMModInputNone,
@@ -173,16 +226,8 @@ public:
 
     //=================================================================
 
-    AMMod();
+    AMMod(DeviceSinkAPI *deviceAPI);
     ~AMMod();
-
-    void configure(MessageQueue* messageQueue,
-            Real rfBandwidth,
-            float modFactor,
-            float toneFrequency,
-			float volumeFactor,
-            bool channelMute,
-            bool playLoop);
 
     virtual void pull(Sample& sample);
     virtual void pullAudio(int nbSamples);
@@ -190,9 +235,15 @@ public:
     virtual void stop();
     virtual bool handleMessage(const Message& cmd);
 
+    virtual int getDeltaFrequency() const { return m_absoluteFrequencyOffset; }
+    virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual void getTitle(QString& title) { title = m_settings.m_title; }
+
     double getMagSq() const { return m_magsq; }
 
     CWKeyer *getCWKeyer() { return &m_cwKeyer; }
+
+    static const QString m_channelID;
 
 signals:
 	/**
@@ -205,79 +256,17 @@ signals:
 
 
 private:
-    class MsgConfigureAMMod : public Message
-    {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        Real getRFBandwidth() const { return m_rfBandwidth; }
-        float getModFactor() const { return m_modFactor; }
-        float getToneFrequency() const { return m_toneFrequency; }
-        float getVolumeFactor() const { return m_volumeFactor; }
-        bool getChannelMute() const { return m_channelMute; }
-        bool getPlayLoop() const { return m_playLoop; }
-
-        static MsgConfigureAMMod* create(Real rfBandwidth, float modFactor, float toneFreqeuncy, float volumeFactor, bool channelMute, bool playLoop)
-        {
-            return new MsgConfigureAMMod(rfBandwidth, modFactor, toneFreqeuncy, volumeFactor, channelMute, playLoop);
-        }
-
-    private:
-        Real m_rfBandwidth;
-        float m_modFactor;
-        float m_toneFrequency;
-        float m_volumeFactor;
-        bool m_channelMute;
-        bool m_playLoop;
-
-        MsgConfigureAMMod(Real rfBandwidth, float modFactor, float toneFrequency, float volumeFactor, bool channelMute, bool playLoop) :
-            Message(),
-            m_rfBandwidth(rfBandwidth),
-            m_modFactor(modFactor),
-            m_toneFrequency(toneFrequency),
-            m_volumeFactor(volumeFactor),
-            m_channelMute(channelMute),
-			m_playLoop(playLoop)
-        { }
-    };
-
-    //=================================================================
-
     enum RateState {
         RSInitialFill,
         RSRunning
     };
 
-    struct Config {
-        int m_basebandSampleRate;
-        int m_outputSampleRate;
-        qint64 m_inputFrequencyOffset;
-        Real m_rfBandwidth;
-        float m_modFactor;
-        float m_toneFrequency;
-        float m_volumeFactor;
-        quint32 m_audioSampleRate;
-        bool m_channelMute;
-        bool m_playLoop;
+    DeviceSinkAPI* m_deviceAPI;
+    ThreadedBasebandSampleSource* m_threadedChannelizer;
+    UpChannelizer* m_channelizer;
 
-        Config() :
-            m_basebandSampleRate(0),
-            m_outputSampleRate(-1),
-            m_inputFrequencyOffset(0),
-            m_rfBandwidth(-1),
-            m_modFactor(0.2f),
-            m_toneFrequency(100),
-            m_volumeFactor(1.0f),
-            m_audioSampleRate(0),
-            m_channelMute(false),
-			m_playLoop(false)
-        { }
-    };
-
-    //=================================================================
-
-    Config m_config;
-    Config m_running;
+    AMModSettings m_settings;
+    int m_absoluteFrequencyOffset;
 
     NCO m_carrierNco;
     NCOF m_toneNco;
@@ -309,11 +298,10 @@ private:
     Real m_peakLevel;
     Real m_levelSum;
     CWKeyer m_cwKeyer;
-    CWSmoother m_cwSmoother;
 
     static const int m_levelNbSamples;
 
-    void apply();
+    void applySettings(const AMModSettings& settings, bool force = false);
     void pullAF(Real& sample);
     void calculateLevel(Real& sample);
     void modulateSample();

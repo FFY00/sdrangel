@@ -63,6 +63,7 @@ public:
     DevicePlutoSDRBox(const std::string& uri);
     ~DevicePlutoSDRBox();
     bool isValid() const { return m_valid; }
+    static bool probeURI(const std::string& uri);
 
     void set_params(DeviceType devType, const std::vector<std::string> &params);
     bool get_param(DeviceType devType, const std::string &param, std::string &value);
@@ -77,7 +78,8 @@ public:
     ssize_t getRxSampleSize();
     ssize_t getTxSampleSize();
     struct iio_channel *getRxChannel0() { return m_chnRx0; }
-    struct iio_channel *getTxChannel0() { return m_chnTx0; }
+    struct iio_channel *getTxChannel0I() { return m_chnTx0i; }
+    struct iio_channel *getTxChannel0Q() { return m_chnTx0q; }
     ssize_t rxBufferRefill();
     ssize_t txBufferPush();
     std::ptrdiff_t rxBufferStep();
@@ -86,13 +88,16 @@ public:
     std::ptrdiff_t txBufferStep();
     char* txBufferEnd();
     char* txBufferFirst();
+    void txChannelConvert(int16_t *dst, int16_t *src);
     bool getRxSampleRates(SampleRates& sampleRates);
     bool getTxSampleRates(SampleRates& sampleRates);
     void setSampleRate(uint32_t sampleRate);
     void setFIR(uint32_t sampleRate, uint32_t intdec, DeviceUse use, uint32_t bw, int gain);
     void setFIREnable(bool enable);
     void setLOPPMTenths(int ppmTenths);
-    bool getRSSI(std::string& rssiStr, unsigned int chan);
+    bool getRxGain(int& gaindB, unsigned int chan);
+    bool getRxRSSI(std::string& rssiStr, unsigned int chan);
+    bool getTxRSSI(std::string& rssiStr, unsigned int chan);
     bool fetchTemp();
     float getTemp() const { return m_temp; }
     bool getRateGovernors(std::string& rateGovernors);
@@ -103,7 +108,8 @@ private:
     struct iio_device  *m_devRx;
     struct iio_device  *m_devTx;
     struct iio_channel *m_chnRx0;
-    struct iio_channel *m_chnTx0;
+    struct iio_channel *m_chnTx0i;
+    struct iio_channel *m_chnTx0q;
     struct iio_buffer  *m_rxBuf;
     struct iio_buffer  *m_txBuf;
     bool m_valid;

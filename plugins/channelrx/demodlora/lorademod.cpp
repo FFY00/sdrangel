@@ -16,23 +16,31 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
-#include "../../channelrx/demodlora/lorademod.h"
 
-#include <dsp/downchannelizer.h>
 #include <QTime>
 #include <QDebug>
 #include <stdio.h>
-#include "../../channelrx/demodlora/lorabits.h"
+
+#include <dsp/downchannelizer.h>
+#include "dsp/threadedbasebandsamplesink.h"
+#include <device/devicesourceapi.h>
+
+#include "lorademod.h"
+#include "lorabits.h"
 
 MESSAGE_CLASS_DEFINITION(LoRaDemod::MsgConfigureLoRaDemod, Message)
+MESSAGE_CLASS_DEFINITION(LoRaDemod::MsgConfigureChannelizer, Message)
 
-LoRaDemod::LoRaDemod(BasebandSampleSink* sampleSink) :
-	m_sampleSink(sampleSink),
+const QString LoRaDemod::m_channelID = "de.maintech.sdrangelove.channel.lora";
+
+LoRaDemod::LoRaDemod(DeviceSourceAPI* deviceAPI) :
+    m_deviceAPI(deviceAPI),
+	m_sampleSink(0),
 	m_settingsMutex(QMutex::Recursive)
 {
 	setObjectName("LoRaDemod");
 
-	m_Bandwidth = 7813;
+	m_Bandwidth = LoRaDemodSettings::bandwidths[0];
 	m_sampleRate = 96000;
 	m_frequency = 0;
 	m_nco.setFreq(m_frequency, m_sampleRate);
@@ -54,6 +62,11 @@ LoRaDemod::LoRaDemod(BasebandSampleSink* sampleSink) :
 	mov = new float[4*LORA_SFFT_LEN];
 	history = new short[1024];
 	finetune = new short[16];
+
+    m_channelizer = new DownChannelizer(this);
+    m_threadedChannelizer = new ThreadedBasebandSampleSink(m_channelizer);
+    m_deviceAPI->addThreadedSink(m_threadedChannelizer);
+    m_deviceAPI->addChannelAPI(this);
 }
 
 LoRaDemod::~LoRaDemod()
@@ -68,12 +81,11 @@ LoRaDemod::~LoRaDemod()
 		delete [] history;
 	if (finetune)
 		delete [] finetune;
-}
 
-void LoRaDemod::configure(MessageQueue* messageQueue, Real Bandwidth)
-{
-	Message* cmd = MsgConfigureLoRaDemod::create(Bandwidth);
-	messageQueue->push(cmd);
+	m_deviceAPI->removeChannelAPI(this);
+    m_deviceAPI->removeThreadedSink(m_threadedChannelizer);
+    delete m_threadedChannelizer;
+    delete m_channelizer;
 }
 
 void LoRaDemod::dumpRaw()
@@ -302,18 +314,34 @@ bool LoRaDemod::handleMessage(const Message& cmd)
 
 		return true;
 	}
+    else if (MsgConfigureChannelizer::match(cmd))
+    {
+        MsgConfigureChannelizer& cfg = (MsgConfigureChannelizer&) cmd;
+
+        m_channelizer->configure(m_channelizer->getInputMessageQueue(),
+            cfg.getSampleRate(),
+            cfg.getCenterFrequency());
+
+        qDebug() << "LoRaDemod::handleMessage: MsgConfigureChannelizer: sampleRate: " << cfg.getSampleRate()
+                << " centerFrequency: " << cfg.getCenterFrequency();
+
+        return true;
+    }
 	else if (MsgConfigureLoRaDemod::match(cmd))
 	{
 		MsgConfigureLoRaDemod& cfg = (MsgConfigureLoRaDemod&) cmd;
 
 		m_settingsMutex.lock();
 
-		m_Bandwidth = cfg.getBandwidth();
+		LoRaDemodSettings settings = cfg.getSettings();
+
+		m_Bandwidth = LoRaDemodSettings::bandwidths[settings.m_bandwidthIndex];
 		m_interpolator.create(16, m_sampleRate, m_Bandwidth/1.9);
 
 		m_settingsMutex.unlock();
 
-		qDebug() << " MsgConfigureLoRaDemod: m_Bandwidth: " << m_Bandwidth;
+		m_settings = settings;
+		qDebug() << "LoRaDemod::handleMessage: MsgConfigureLoRaDemod: m_Bandwidth: " << m_Bandwidth;
 
 		return true;
 	}

@@ -17,28 +17,29 @@
 #ifndef INCLUDE_AIRSPYGUI_H
 #define INCLUDE_AIRSPYGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QWidget>
 
+#include "util/messagequeue.h"
 #include "airspyinput.h"
 
 #define AIRSPY_MAX_DEVICE (32)
 
-class DeviceSourceAPI;
+class DeviceUISet;
 
 namespace Ui {
 	class AirspyGui;
 	class AirspySampleRates;
 }
 
-class AirspyGui : public QWidget, public PluginInstanceUI {
+class AirspyGui : public QWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
-	explicit AirspyGui(DeviceSourceAPI *deviceAPI, QWidget* parent = NULL);
+	explicit AirspyGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
 	virtual ~AirspyGui();
-	void destroy();
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -48,6 +49,7 @@ public:
 	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
+	virtual MessageQueue* getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 	uint32_t getDevSampleRate(unsigned int index);
 	int getDevSampleRateIndex(uint32_t sampleRate);
@@ -55,7 +57,8 @@ public:
 private:
 	Ui::AirspyGui* ui;
 
-	DeviceSourceAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
+	bool m_forceSettings;
 	AirspySettings m_settings;
 	QTimer m_updateTimer;
 	QTimer m_statusTimer;
@@ -64,14 +67,15 @@ private:
     int m_sampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
     int m_lastEngineState;
+    MessageQueue m_inputMessageQueue;
 
 	void displaySettings();
 	void displaySampleRates();
 	void sendSettings();
     void updateSampleRateAndFrequency();
+    void updateFrequencyLimits();
 
 private slots:
-    void handleDSPMessages();
 	void on_centerFrequency_changed(quint64 value);
 	void on_LOppm_valueChanged(int value);
 	void on_dcOffset_toggled(bool checked);
@@ -87,9 +91,10 @@ private slots:
 	void on_mixAGC_stateChanged(int state);
 	void on_startStop_toggled(bool checked);
     void on_record_toggled(bool checked);
+    void on_transverter_clicked();
 	void updateHardware();
     void updateStatus();
-	void handleSourceMessages();
+	void handleInputMessages();
 };
 
 #endif // INCLUDE_AIRSPYGUI_H

@@ -14,8 +14,9 @@
 #include "httpsession.h"
 #include "httpresponse.h"
 #include "httprequest.h"
+#include "httpsessionssettings.h"
 
-namespace stefanfrings {
+namespace qtwebapp {
 
 /**
   Stores HTTP sessions and deletes them when they have expired.
@@ -37,8 +38,11 @@ class DECLSPEC HttpSessionStore : public QObject {
     Q_DISABLE_COPY(HttpSessionStore)
 public:
 
-    /** Constructor. */
+    /** Constructor with Qt settings. */
     HttpSessionStore(QSettings* settings, QObject* parent=NULL);
+
+    /** Constructor with settings structure. */
+    HttpSessionStore(const HttpSessionsSettings& settings, QObject* parent=NULL);
 
     /** Destructor */
     virtual ~HttpSessionStore();
@@ -78,14 +82,29 @@ public:
     /** Delete a session */
     void removeSession(HttpSession session);
 
+    /**
+     * Get a sessions settings copy
+     * @return The current sessions settings
+     */
+    HttpSessionsSettings getListenerSettings() const { return sessionsSettings; }
+
+    /**
+     * Set new sessions settings data
+     * @param sessions settings to replace current data
+     */
+    void setListenerSettings(const HttpSessionsSettings& settings) { sessionsSettings = settings; }
+
 protected:
     /** Storage for the sessions */
     QMap<QByteArray,HttpSession> sessions;
 
 private:
 
-    /** Configuration settings */
+    /** Configuration settings as Qt settings*/
     QSettings* settings;
+
+    /** Configuration settings as a structure*/
+    HttpSessionsSettings sessionsSettings;
 
     /** Timer to remove expired sessions */
     QTimer cleanupTimer;
@@ -98,6 +117,9 @@ private:
 
     /** Used to synchronize threads */
     QMutex mutex;
+
+    /** Settings flag */
+    bool useQtSettings;
 
 private slots:
 

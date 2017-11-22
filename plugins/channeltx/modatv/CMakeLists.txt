@@ -4,12 +4,14 @@ set(modatv_SOURCES
 	atvmod.cpp
 	atvmodgui.cpp
 	atvmodplugin.cpp
+	atvmodsettings.cpp
 )
 
 set(modatv_HEADERS
 	atvmod.h
 	atvmodgui.h
 	atvmodplugin.h
+	atvmodsettings.h
 )
 
 set(modatv_FORMS
@@ -40,6 +42,7 @@ target_link_libraries(modatv
     ${OpenCV_LIBS}
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(modatv Core Widgets)

@@ -17,6 +17,7 @@
 #include "chanalyzernggui.h"
 
 #include <device/devicesourceapi.h>
+#include "device/deviceuiset.h"
 #include <dsp/downchannelizer.h>
 #include <QDockWidget>
 #include <QMainWindow>
@@ -31,17 +32,14 @@
 #include "plugin/pluginapi.h"
 #include "util/simpleserializer.h"
 #include "util/db.h"
-#include "gui/basicchannelsettingswidget.h"
 #include "dsp/dspengine.h"
 #include "mainwindow.h"
 
 #include "chanalyzerng.h"
 
-const QString ChannelAnalyzerNGGUI::m_channelID = "sdrangel.channel.chanalyzerng";
-
-ChannelAnalyzerNGGUI* ChannelAnalyzerNGGUI::create(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI)
+ChannelAnalyzerNGGUI* ChannelAnalyzerNGGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
 {
-    ChannelAnalyzerNGGUI* gui = new ChannelAnalyzerNGGUI(pluginAPI, deviceAPI);
+    ChannelAnalyzerNGGUI* gui = new ChannelAnalyzerNGGUI(pluginAPI, deviceUISet, rxChannel);
 	return gui;
 }
 
@@ -142,6 +140,7 @@ bool ChannelAnalyzerNGGUI::deserialize(const QByteArray& data)
 
 		blockApplySettings(false);
 	    m_channelMarker.blockSignals(false);
+	    m_channelMarker.emitChangedByAPI();
 
         ui->spanLog2->setCurrentIndex(spanLog2);
         setNewFinalRate(spanLog2);
@@ -157,14 +156,80 @@ bool ChannelAnalyzerNGGUI::deserialize(const QByteArray& data)
 	}
 }
 
-bool ChannelAnalyzerNGGUI::handleMessage(const Message& message __attribute__((unused)))
+bool ChannelAnalyzerNGGUI::handleMessage(const Message& message)
 {
-	return false;
+    if (ChannelAnalyzerNG::MsgReportChannelSampleRateChanged::match(message))
+    {
+        int newRate = getRequestedChannelSampleRate() / (1<<m_spanLog2);
+
+        uint64_t newBW = (ui->BW->value() * 100L * m_rate) / newRate;
+        uint64_t newLC = (ui->lowCut->value() * 100L * m_rate) / newRate;
+
+        qDebug() << "ChannelAnalyzerNGGUI::handleMessage: MsgReportChannelSampleRateChanged:"
+                << " newRate: " << newRate
+                << " newBW: " << newBW
+                << " newLC: " << newLC;
+
+        m_rate = newRate;
+
+        ui->BW->setValue(newBW/100);
+        ui->lowCut->setValue(newLC/100);
+
+        blockApplySettings(true);
+        setFiltersUIBoundaries();
+        blockApplySettings(false);
+
+        if (ui->ssb->isChecked())
+        {
+            QString s = QString::number(ui->BW->value()/10.0, 'f', 1);
+            ui->BWText->setText(tr("%1k").arg(s));
+        }
+        else
+        {
+            QString s = QString::number(ui->BW->value()/5.0, 'f', 1); // BW = value * 2
+            ui->BWText->setText(tr("%1k").arg(s));
+        }
+
+        QString s = QString::number(ui->lowCut->value()/10.0, 'f', 1);
+        ui->lowCutText->setText(tr("%1k").arg(s));
+
+        s = QString::number(m_rate/1000.0, 'f', 1);
+        ui->spanText->setText(tr("%1 kS/s").arg(s));
+
+        ui->glScope->setSampleRate(m_rate);
+
+        displayBandwidth(); // sets ui->glSpectrum sample rate
+
+        return true;
+    }
+
+    return false;
 }
 
-void ChannelAnalyzerNGGUI::viewChanged()
+void ChannelAnalyzerNGGUI::handleInputMessages()
 {
+    Message* message;
+
+    while ((message = getInputMessageQueue()->pop()) != 0)
+    {
+        qDebug("ChannelAnalyzerGUI::handleInputMessages: message: %s", message->getIdentifier());
+
+        if (handleMessage(*message))
+        {
+            delete message;
+        }
+    }
+}
+
+void ChannelAnalyzerNGGUI::channelMarkerChangedByCursor()
+{
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
 	applySettings();
+}
+
+void ChannelAnalyzerNGGUI::channelMarkerHighlightedByCursor()
+{
+    setHighlighted(m_channelMarker.getHighlighted());
 }
 
 void ChannelAnalyzerNGGUI::tick()
@@ -172,13 +237,6 @@ void ChannelAnalyzerNGGUI::tick()
 	double powDb = CalcDb::dbPower(m_channelAnalyzer->getMagSq());
 	m_channelPowerDbAvg.feed(powDb);
 	ui->channelPower->setText(tr("%1 dB").arg(m_channelPowerDbAvg.average(), 0, 'f', 1));
-}
-
-void ChannelAnalyzerNGGUI::channelizerInputSampleRateChanged()
-{
-    //ui->channelSampleRate->setValueRange(7, 2000U, m_channelAnalyzer->getInputSampleRate());
-	setNewFinalRate(m_spanLog2);
-	applySettings();
 }
 
 void ChannelAnalyzerNGGUI::on_channelSampleRate_changed(quint64 value)
@@ -204,18 +262,19 @@ int ChannelAnalyzerNGGUI::getRequestedChannelSampleRate()
     if (ui->useRationalDownsampler->isChecked()) {
         return ui->channelSampleRate->getValueNew();
     } else {
-        return m_channelizer->getInputSampleRate();
+        return m_channelAnalyzer->getChannelizer()->getInputSampleRate();
     }
 }
 
 void ChannelAnalyzerNGGUI::on_deltaFrequency_changed(qint64 value)
 {
     m_channelMarker.setCenterFrequency(value);
+    applySettings();
 }
 
 void ChannelAnalyzerNGGUI::on_BW_valueChanged(int value)
 {
-	m_channelMarker.setBandwidth(value * 100 * 2);
+//	m_channelMarker.setBandwidth(value * 100 * 2);
 
 	if (ui->ssb->isChecked())
 	{
@@ -229,7 +288,7 @@ void ChannelAnalyzerNGGUI::on_BW_valueChanged(int value)
 	}
 
 	displayBandwidth();
-	on_lowCut_valueChanged(m_channelMarker.getLowCutoff()/100);
+	on_lowCut_valueChanged(m_channelMarker.getLowCutoff()/100); // does apply settings
 }
 
 int ChannelAnalyzerNGGUI::getEffectiveLowCutoff(int lowCutoff)
@@ -259,11 +318,13 @@ int ChannelAnalyzerNGGUI::getEffectiveLowCutoff(int lowCutoff)
 
 void ChannelAnalyzerNGGUI::on_lowCut_valueChanged(int value)
 {
+    blockApplySettings(true);
 	int lowCutoff = getEffectiveLowCutoff(value * 100);
 	m_channelMarker.setLowCutoff(lowCutoff);
 	QString s = QString::number(lowCutoff/1000.0, 'f', 1);
 	ui->lowCutText->setText(tr("%1k").arg(s));
 	ui->lowCut->setValue(lowCutoff/100);
+	blockApplySettings(false);
 	applySettings();
 }
 
@@ -319,22 +380,12 @@ void ChannelAnalyzerNGGUI::onWidgetRolled(QWidget* widget __attribute__((unused)
 	*/
 }
 
-void ChannelAnalyzerNGGUI::onMenuDoubleClicked()
-{
-	if(!m_basicSettingsShown) {
-		m_basicSettingsShown = true;
-		BasicChannelSettingsWidget* bcsw = new BasicChannelSettingsWidget(&m_channelMarker, this);
-		bcsw->show();
-	}
-}
-
-ChannelAnalyzerNGGUI::ChannelAnalyzerNGGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidget* parent) :
+ChannelAnalyzerNGGUI::ChannelAnalyzerNGGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel, QWidget* parent) :
 	RollupWidget(parent),
 	ui(new Ui::ChannelAnalyzerNGGUI),
 	m_pluginAPI(pluginAPI),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
 	m_channelMarker(this),
-	m_basicSettingsShown(false),
 	m_doApplySettings(true),
 	m_rate(6000),
 	m_spanLog2(0),
@@ -343,16 +394,13 @@ ChannelAnalyzerNGGUI::ChannelAnalyzerNGGUI(PluginAPI* pluginAPI, DeviceSourceAPI
 	ui->setupUi(this);
 	setAttribute(Qt::WA_DeleteOnClose, true);
 	connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
-	connect(this, SIGNAL(menuDoubleClickEvent()), this, SLOT(onMenuDoubleClicked()));
 
 	m_spectrumVis = new SpectrumVis(ui->glSpectrum);
 	m_scopeVis = new ScopeVisNG(ui->glScope);
 	m_spectrumScopeComboVis = new SpectrumScopeNGComboVis(m_spectrumVis, m_scopeVis);
-	m_channelAnalyzer = new ChannelAnalyzerNG(m_spectrumScopeComboVis);
-	m_channelizer = new DownChannelizer(m_channelAnalyzer);
-	m_threadedChannelizer = new ThreadedBasebandSampleSink(m_channelizer, this);
-	connect(m_channelizer, SIGNAL(inputSampleRateChanged()), this, SLOT(channelizerInputSampleRateChanged()));
-	m_deviceAPI->addThreadedSink(m_threadedChannelizer);
+	m_channelAnalyzer = (ChannelAnalyzerNG*) rxChannel; //new ChannelAnalyzerNG(m_deviceUISet->m_deviceSourceAPI);
+	m_channelAnalyzer->setSampleSink(m_spectrumScopeComboVis);
+	m_channelAnalyzer->setMessageQueueToGUI(getInputMessageQueue());
 
     ui->deltaFrequencyLabel->setText(QString("%1f").arg(QChar(0x94, 0x03)));
     ui->deltaFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
@@ -369,25 +417,29 @@ ChannelAnalyzerNGGUI::ChannelAnalyzerNGGUI(PluginAPI* pluginAPI, DeviceSourceAPI
     ui->glSpectrum->setLsbDisplay(false);
 	ui->BWLabel->setText("BP");
 
-	ui->glSpectrum->connectTimer(m_pluginAPI->getMainWindow()->getMasterTimer());
-	ui->glScope->connectTimer(m_pluginAPI->getMainWindow()->getMasterTimer());
-	connect(&m_pluginAPI->getMainWindow()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
+	ui->glSpectrum->connectTimer(MainWindow::getInstance()->getMasterTimer());
+	ui->glScope->connectTimer(MainWindow::getInstance()->getMasterTimer());
+	connect(&MainWindow::getInstance()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
 
-	//m_channelMarker = new ChannelMarker(this);
+	m_channelMarker.blockSignals(true);
 	m_channelMarker.setColor(Qt::gray);
 	m_channelMarker.setBandwidth(m_rate);
 	m_channelMarker.setSidebands(ChannelMarker::usb);
 	m_channelMarker.setCenterFrequency(0);
-	m_channelMarker.setVisible(true);
+    m_channelMarker.blockSignals(false);
+	m_channelMarker.setVisible(true); // activate signal on the last setting only
+	setTitleColor(m_channelMarker.getColor());
 
-	connect(&m_channelMarker, SIGNAL(changed()), this, SLOT(viewChanged()));
-
-	m_deviceAPI->registerChannelInstance(m_channelID, this);
-	m_deviceAPI->addChannelMarker(&m_channelMarker);
-	m_deviceAPI->addRollupWidget(this);
+    m_deviceUISet->registerRxChannelInstance(ChannelAnalyzerNG::m_channelID, this);
+	m_deviceUISet->addChannelMarker(&m_channelMarker);
+	m_deviceUISet->addRollupWidget(this);
 
 	ui->spectrumGUI->setBuddies(m_spectrumVis->getInputMessageQueue(), m_spectrumVis, ui->glSpectrum);
 	ui->scopeGUI->setBuddies(m_scopeVis->getInputMessageQueue(), m_scopeVis, ui->glScope);
+
+	connect(&m_channelMarker, SIGNAL(changedByCursor()), this, SLOT(channelMarkerChangedByCursor()));
+    connect(&m_channelMarker, SIGNAL(highlightedByCursor()), this, SLOT(channelMarkerHighlightedByCursor()));
+	connect(getInputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()));
 
 	applySettings();
 	setNewFinalRate(m_spanLog2);
@@ -395,15 +447,11 @@ ChannelAnalyzerNGGUI::ChannelAnalyzerNGGUI(PluginAPI* pluginAPI, DeviceSourceAPI
 
 ChannelAnalyzerNGGUI::~ChannelAnalyzerNGGUI()
 {
-    m_deviceAPI->removeChannelInstance(this);
-	m_deviceAPI->removeThreadedSink(m_threadedChannelizer);
-	delete m_threadedChannelizer;
-	delete m_channelizer;
-	delete m_channelAnalyzer;
+    m_deviceUISet->removeRxChannelInstance(this);
+	delete m_channelAnalyzer; // TODO: check this: when the GUI closes it has to delete the demodulator
 	delete m_spectrumVis;
 	delete m_scopeVis;
 	delete m_spectrumScopeComboVis;
-	//delete m_channelMarker;
 	delete ui;
 }
 
@@ -432,6 +480,7 @@ bool ChannelAnalyzerNGGUI::setNewFinalRate(int spanLog2)
 	displayBandwidth();
 
 	ui->glScope->setSampleRate(m_rate);
+	ui->glSpectrum->setSampleRate(m_rate);
 	m_scopeVis->setSampleRate(m_rate);
 
 	return true;
@@ -439,6 +488,10 @@ bool ChannelAnalyzerNGGUI::setNewFinalRate(int spanLog2)
 
 void ChannelAnalyzerNGGUI::displayBandwidth()
 {
+    blockApplySettings(true);
+
+    m_channelMarker.setBandwidth(ui->BW->value() * 100 * 2);
+
     if (ui->ssb->isChecked())
     {
         if (ui->BW->value() < 0)
@@ -452,8 +505,9 @@ void ChannelAnalyzerNGGUI::displayBandwidth()
             ui->glSpectrum->setLsbDisplay(false);
         }
 
-        ui->glSpectrum->setCenterFrequency(m_rate/4);
+        m_channelMarker.setLowCutoff(ui->lowCut->value()*100);
         ui->glSpectrum->setSampleRate(m_rate/2);
+        ui->glSpectrum->setCenterFrequency(m_rate/4);
         ui->glSpectrum->setSsbSpectrum(true);
     }
     else
@@ -466,7 +520,7 @@ void ChannelAnalyzerNGGUI::displayBandwidth()
         ui->glSpectrum->setSsbSpectrum(false);
     }
 
-
+    blockApplySettings(false);
 }
 
 void ChannelAnalyzerNGGUI::setFiltersUIBoundaries()
@@ -511,17 +565,19 @@ void ChannelAnalyzerNGGUI::applySettings()
 {
 	if (m_doApplySettings)
 	{
-		setTitleColor(m_channelMarker.getColor());
-		ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+        int sampleRate = getRequestedChannelSampleRate();
 
-		m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-			//m_channelizer->getInputSampleRate(),
-            getRequestedChannelSampleRate(),
-			m_channelMarker.getCenterFrequency());
+        ChannelAnalyzerNG::MsgConfigureChannelizer *msgChannelizer = ChannelAnalyzerNG::MsgConfigureChannelizer::create(sampleRate, m_channelMarker.getCenterFrequency());
+        m_channelAnalyzer->getInputMessageQueue()->push(msgChannelizer);
+
+        ChannelAnalyzerNG::MsgConfigureChannelizer *msg =
+                ChannelAnalyzerNG::MsgConfigureChannelizer::create(
+                        sampleRate,
+                        m_channelMarker.getCenterFrequency());
+        m_channelAnalyzer->getInputMessageQueue()->push(msg);
 
 		m_channelAnalyzer->configure(m_channelAnalyzer->getInputMessageQueue(),
-			//m_channelizer->getInputSampleRate(), // TODO: specify required channel sample rate
-            getRequestedChannelSampleRate(), // TODO: specify required channel sample rate
+		    sampleRate,
 			ui->BW->value() * 100.0,
 			ui->lowCut->value() * 100.0,
 			m_spanLog2,
@@ -531,15 +587,11 @@ void ChannelAnalyzerNGGUI::applySettings()
 
 void ChannelAnalyzerNGGUI::leaveEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(false);
-	blockApplySettings(false);
 }
 
 void ChannelAnalyzerNGGUI::enterEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(true);
-	blockApplySettings(false);
 }
 

@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include <QObject>
 #include <QDir>
+#include <QList>
+#include <QString>
+
 #include "plugin/plugininterface.h"
 #include "plugin/pluginapi.h"
 #include "util/export.h"
@@ -11,7 +14,6 @@
 class QComboBox;
 class QPluginLoader;
 class Preset;
-class MainWindow;
 class Message;
 class MessageQueue;
 class DeviceSourceAPI;
@@ -36,9 +38,10 @@ public:
 
 	typedef QList<Plugin> Plugins;
 
-	explicit PluginManager(MainWindow* mainWindow, QObject* parent = NULL);
+	explicit PluginManager(QObject* parent = 0);
 	~PluginManager();
 
+	PluginAPI *getPluginAPI() { return &m_pluginAPI; }
 	void loadPlugins();
 	const Plugins& getPlugins() const { return m_plugins; }
 
@@ -48,48 +51,22 @@ public:
 	void registerTxChannel(const QString& channelName, PluginInterface* plugin);
 	void registerSampleSink(const QString& sourceName, PluginInterface* plugin);
 
+	PluginAPI::SamplingDeviceRegistrations& getSourceDeviceRegistrations() { return m_sampleSourceRegistrations; }
+	PluginAPI::SamplingDeviceRegistrations& getSinkDeviceRegistrations() { return m_sampleSinkRegistrations; }
 	PluginAPI::ChannelRegistrations *getRxChannelRegistrations() { return &m_rxChannelRegistrations; }
 	PluginAPI::ChannelRegistrations *getTxChannelRegistrations() { return &m_txChannelRegistrations; }
 
-	void updateSampleSourceDevices();
-	void duplicateLocalSampleSourceDevices(uint deviceUID);
-	void fillSampleSourceSelector(QComboBox* comboBox, uint deviceUID);
-	int getSampleSourceSelectorIndex(QComboBox* comboBox, DeviceSourceAPI *deviceSourceAPI);
+    void createRxChannelInstance(int channelPluginIndex, DeviceUISet *deviceUISet, DeviceSourceAPI *deviceAPI);
+    void listRxChannels(QList<QString>& list);
 
-	void updateSampleSinkDevices();
-	void duplicateLocalSampleSinkDevices(uint deviceUID);
-	void fillSampleSinkSelector(QComboBox* comboBox, uint deviceUID);
-	int getSampleSinkSelectorIndex(QComboBox* comboBox, DeviceSinkAPI *deviceSinkAPI);
+	void createTxChannelInstance(int channelPluginIndex, DeviceUISet *deviceUISet, DeviceSinkAPI *deviceAPI);
+	void listTxChannels(QList<QString>& list);
 
-	int selectSampleSourceByIndex(int index, DeviceSourceAPI *deviceAPI);
-	int selectFirstSampleSource(const QString& sourceId, DeviceSourceAPI *deviceAPI);
-	int selectSampleSourceBySerialOrSequence(const QString& sourceId, const QString& sourceSerial, uint32_t sourceSequence, DeviceSourceAPI *deviceAPI);
-	void selectSampleSourceByDevice(void *devicePtr, DeviceSourceAPI *deviceAPI);
-
-	int selectSampleSinkByIndex(int index, DeviceSinkAPI *deviceAPI);
-	int selectFirstSampleSink(const QString& sourceId, DeviceSinkAPI *deviceAPI);
-	int selectSampleSinkBySerialOrSequence(const QString& sinkId, const QString& sinkSerial, uint32_t sinkSequence, DeviceSinkAPI *deviceAPI);
-	void selectSampleSinkByDevice(void *devicePtr, DeviceSinkAPI *deviceAPI);
-
-	void populateRxChannelComboBox(QComboBox *channels);
-	void createRxChannelInstance(int channelPluginIndex, DeviceSourceAPI *deviceAPI);
-
-	void populateTxChannelComboBox(QComboBox *channels);
-	void createTxChannelInstance(int channelPluginIndex, DeviceSinkAPI *deviceAPI);
+	static const QString& getFileSourceDeviceId() { return m_fileSourceDeviceTypeID; }
+	static const QString& getFileSinkDeviceId() { return m_fileSinkDeviceTypeID; }
 
 private:
-	struct SamplingDeviceRegistration {
-		QString m_deviceId;
-		PluginInterface* m_plugin;
-		SamplingDeviceRegistration(const QString& deviceId, PluginInterface* plugin) :
-			m_deviceId(deviceId),
-			m_plugin(plugin)
-		{ }
-	};
-
-	typedef QList<SamplingDeviceRegistration> SamplingDeviceRegistrations;
-
-	struct SamplingDevice {
+	struct SamplingDevice { //!< This is the device registration
 		PluginInterface* m_plugin;
 		QString m_displayName;
 		QString m_hadrwareId;
@@ -117,28 +94,25 @@ private:
 	PluginAPI m_pluginAPI;
 	Plugins m_plugins;
 
-	PluginAPI::ChannelRegistrations m_rxChannelRegistrations; //!< Channel plugins register here
-	SamplingDeviceRegistrations m_sampleSourceRegistrations;  //!< Input source plugins (one per device kind) register here
-	SamplingDevices m_sampleSourceDevices;                    //!< Instances of input sources present in the system
+	PluginAPI::ChannelRegistrations m_rxChannelRegistrations;           //!< Channel plugins register here
+	PluginAPI::SamplingDeviceRegistrations m_sampleSourceRegistrations; //!< Input source plugins (one per device kind) register here
 
-	PluginAPI::ChannelRegistrations m_txChannelRegistrations; //!< Channel plugins register here
-	SamplingDeviceRegistrations m_sampleSinkRegistrations;    //!< Output sink plugins (one per device kind) register here
-	SamplingDevices m_sampleSinkDevices;                      //!< Instances of output sinks present in the system
+	PluginAPI::ChannelRegistrations m_txChannelRegistrations;         //!< Channel plugins register here
+	PluginAPI::SamplingDeviceRegistrations m_sampleSinkRegistrations; //!< Output sink plugins (one per device kind) register here
 
 	// "Local" sample source device IDs
-    static const QString m_sdrDaemonHardwareID;       //!< SDRdaemon hardware ID
-	static const QString m_sdrDaemonDeviceTypeID;     //!< SDRdaemon source plugin ID
-	static const QString m_sdrDaemonFECHardwareID;    //!< SDRdaemon with FEC hardware ID
-    static const QString m_sdrDaemonFECDeviceTypeID;  //!< SDRdaemon with FEC source plugin ID
-    static const QString m_fileSourceHardwareID;      //!< FileSource source hardware ID
-    static const QString m_fileSourceDeviceTypeID;    //!< FileSource source plugin ID
+    static const QString m_sdrDaemonSourceHardwareID;   //!< SDRdaemon source hardware ID
+    static const QString m_sdrDaemonSourceDeviceTypeID; //!< SDRdaemon source plugin ID
+    static const QString m_fileSourceHardwareID;        //!< FileSource source hardware ID
+    static const QString m_fileSourceDeviceTypeID;      //!< FileSource source plugin ID
 
     // "Local" sample sink device IDs
+    static const QString m_sdrDaemonSinkHardwareID;   //!< SDRdaemon source hardware ID
+    static const QString m_sdrDaemonSinkDeviceTypeID; //!< SDRdaemon source plugin ID
+    static const QString m_fileSinkHardwareID;        //!< FileSource source hardware ID
     static const QString m_fileSinkDeviceTypeID;      //!< FileSink sink plugin ID
 
 	void loadPlugins(const QDir& dir);
-
-	friend class MainWindow;
 };
 
 static inline bool operator<(const PluginManager::Plugin& a, const PluginManager::Plugin& b)

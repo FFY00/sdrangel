@@ -4,12 +4,14 @@
 #
 #--------------------------------------------------------
 
-QT += core gui multimedia opengl
+QT += core multimedia
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
 TEMPLATE = lib
 TARGET = sdrbase
 INCLUDEPATH += $$PWD
+INCLUDEPATH += ../httpserver
+INCLUDEPATH += ../swagger/sdrangel/code/qt5/client
 
 DEFINES += USE_KISSFFT=1
 win32 {
@@ -20,6 +22,8 @@ DEFINES += USE_SSE2=1
 QMAKE_CXXFLAGS += -msse2
 DEFINES += USE_SSE4_1=1
 QMAKE_CXXFLAGS += -msse4.1
+
+QMAKE_CXXFLAGS += -std=c++11
 
 CONFIG(Release):build_subdir = release
 CONFIG(Debug):build_subdir = debug
@@ -43,13 +47,15 @@ win32 {
         dsp/dvserialworker.cpp
 }
 
-SOURCES += mainwindow.cpp\
-        audio/audiodeviceinfo.cpp\
+SOURCES += audio/audiodeviceinfo.cpp\
         audio/audiofifo.cpp\
         audio/audiooutput.cpp\
         audio/audioinput.cpp\
+        channel/channelsinkapi.cpp\
+        channel/channelsourceapi.cpp\
         device/devicesourceapi.cpp\
         device/devicesinkapi.cpp\
+        device/deviceenumerator.cpp\
         dsp/afsquelch.cpp\
         dsp/agc.cpp\
         dsp/downchannelizer.cpp\
@@ -82,48 +88,11 @@ SOURCES += mainwindow.cpp\
         dsp/basebandsamplesink.cpp\
         dsp/basebandsamplesource.cpp\
         dsp/nullsink.cpp\
-        dsp/spectrumscopecombovis.cpp\
-        dsp/spectrumscopengcombovis.cpp\
-        dsp/scopevis.cpp\
-        dsp/scopevisng.cpp\
-        dsp/spectrumvis.cpp\
         dsp/threadedbasebandsamplesink.cpp\
         dsp/threadedbasebandsamplesource.cpp\
         dsp/wfir.cpp\
-        gui/aboutdialog.cpp\
-        gui/addpresetdialog.cpp\
-        gui/basicchannelsettingswidget.cpp\
-        gui/basicchannelsettingsdialog.cpp\
-        gui/buttonswitch.cpp\
-        gui/channelwindow.cpp\
-        gui/clickablelabel.cpp\
-        gui/colormapper.cpp\
-        gui/cwkeyergui.cpp\
-        gui/glscope.cpp\
-        gui/glscopegui.cpp\
-        gui/glscopeng.cpp\
-        gui/glscopenggui.cpp\
-        gui/glshadersimple.cpp\
-        gui/glshadertextured.cpp\
-        gui/glspectrum.cpp\
-        gui/glspectrumgui.cpp\
-        gui/indicator.cpp\
-        gui/levelmeter.cpp\
-        gui/pluginsdialog.cpp\
-        gui/audiodialog.cpp\
-        gui/presetitem.cpp\
-        gui/rollupwidget.cpp\
-        gui/samplingdevicecontrol.cpp\
-        gui/mypositiondialog.cpp\
-        gui/scale.cpp\
-        gui/scaleengine.cpp\
-        gui/valuedial.cpp\
-        gui/valuedialz.cpp\
         dsp/devicesamplesource.cpp\
         dsp/devicesamplesink.cpp\
-        plugin/pluginapi.cpp\
-        plugin/plugininterface.cpp\
-        plugin/pluginmanager.cpp\
         settings/preferences.cpp\
         settings/preset.cpp\
         settings/mainsettings.cpp\
@@ -134,15 +103,25 @@ SOURCES += mainwindow.cpp\
         util/prettyprint.cpp\
         util/syncmessenger.cpp\
         util/samplesourceserializer.cpp\
-        util/simpleserializer.cpp
+        util/simpleserializer.cpp\
+        util/uid.cpp\
+        plugin/plugininterface.cpp\
+        plugin/pluginapi.cpp\        
+        plugin/pluginmanager.cpp\
+        webapi/webapiadapterinterface.cpp\
+        webapi/webapirequestmapper.cpp\
+        webapi/webapiserver.cpp\
+        mainparser.cpp
 
-HEADERS  += mainwindow.h\
-        audio/audiodeviceinfo.h\
+HEADERS  += audio/audiodeviceinfo.h\
         audio/audiofifo.h\
         audio/audiooutput.h\
         audio/audioinput.h\
+        channel/channelsinkapi.h\
+        channel/channelsourceapi.h\        
         device/devicesourceapi.h\
         device/devicesinkapi.h\
+        device/deviceenumerator.h\
         dsp/afsquelch.h\
         dsp/downchannelizer.h\
         dsp/upchannelizer.h\
@@ -190,50 +169,15 @@ HEADERS  += mainwindow.h\
         dsp/basebandsamplesink.h\
         dsp/basebandsamplesource.h\
         dsp/nullsink.h\
-        dsp/spectrumscopecombovis.h\
-        dsp/spectrumscopengcombovis.h\        
-        dsp/scopevis.h\
-        dsp/scopevisng.h\
-        dsp/spectrumvis.h\
         dsp/threadedbasebandsamplesink.h\
         dsp/threadedbasebandsamplesource.h\
         dsp/wfir.h\
-        gui/aboutdialog.h\
-        gui/addpresetdialog.h\
-        gui/audiodialog.h\
-        gui/basicchannelsettingswidget.h\
-        gui/basicchannelsettingsdialog.h\
-        gui/buttonswitch.h\
-        gui/channelwindow.h\
-        gui/clickablelabel.h\
-        gui/colormapper.h\
-        gui/cwkeyergui.h\
-        gui/glscope.h\
-        gui/glscopegui.h\
-        gui/glscopeng.h\
-        gui/glscopenggui.h\
-        gui/glshadersimple.h\
-        gui/glshadertextured.h\
-        gui/glspectrum.h\
-        gui/glspectrumgui.h\
-        gui/indicator.h\
-        gui/levelmeter.h\
-        gui/physicalunit.h\
-        gui/pluginsdialog.h\
-        gui/presetitem.h\
-        gui/rollupwidget.h\
-        gui/samplingdevicecontrol.h\
-        gui/mypositiondialog.h\
-        gui/scale.h\
-        gui/scaleengine.h\
-        gui/valuedial.h\
-        gui/valuedialz.h\
         dsp/devicesamplesource.h\
         dsp/devicesamplesink.h\
-        plugin/pluginapi.h\
-        plugin/plugininstanceui.h\
-        plugin/plugininterface.h\
-        plugin/pluginmanager.h\
+        plugin/plugininstancegui.h\
+        plugin/plugininterface.h\   
+        plugin/pluginapi.h\   
+        plugin/pluginmanager.h\   
         settings/preferences.h\
         settings/preset.h\
         settings/mainsettings.h\
@@ -245,27 +189,16 @@ HEADERS  += mainwindow.h\
         util/prettyprint.h\
         util/syncmessenger.h\
         util/samplesourceserializer.h\
-        util/simpleserializer.h
-
-FORMS    += mainwindow.ui\
-        gui/scopewindow.ui\
-        gui/addpresetdialog.ui\
-        gui/basicchannelsettingswidget.ui\
-        gui/basicchannelsettingsdialog.ui\
-        gui/cwkeyergui.ui\
-        gui/audiodialog.ui\
-        gui/glscopegui.ui\
-        gui/glscopenggui.ui\
-        gui/aboutdialog.ui\
-        gui/pluginsdialog.ui\
-        gui/samplingdevicecontrol.ui\
-        gui/myposdialog.ui\
-        gui/glspectrumgui.ui\
-        mainwindow.ui
-
-RESOURCES = resources/res.qrc
+        util/simpleserializer.h\
+        util/uid.h\
+        webapi/webapiadapterinterface.h\
+        webapi/webapirequestmapper.h\
+        webapi/webapiserver.h\
+        mainparser.h
 
 !macx:LIBS += -L../serialdv/$${build_subdir} -lserialdv
+LIBS += -L../httpserver/$${build_subdir} -lhttpserver
+LIBS += -L../swagger/$${build_subdir} -lswagger
 
 CONFIG(ANDROID):CONFIG += mobility
 CONFIG(ANDROID):MOBILITY =

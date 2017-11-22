@@ -20,9 +20,11 @@
 #include <QProxyStyle>
 #include <QStyleFactory>
 #include <QFontDatabase>
+
+#include "loggerwithfile.h"
 #include "mainwindow.h"
 
-static int runQtApplication(int argc, char* argv[])
+static int runQtApplication(int argc, char* argv[], qtwebapp::LoggerWithFile *logger)
 {
 	QApplication a(argc, argv);
 /*
@@ -31,6 +33,7 @@ static int runQtApplication(int argc, char* argv[])
 */
 	QCoreApplication::setOrganizationName("f4exb");
 	QCoreApplication::setApplicationName("SDRangel");
+	QCoreApplication::setApplicationVersion("3.8.4");
 
 #if 1
 	qApp->setStyle(QStyleFactory::create("fusion"));
@@ -87,7 +90,10 @@ static int runQtApplication(int argc, char* argv[])
 #endif
 
 #endif
-	MainWindow w;
+	MainParser parser;
+	parser.parse(*qApp);
+
+	MainWindow w(logger, parser);
 	w.show();
 
 	return a.exec();
@@ -95,7 +101,9 @@ static int runQtApplication(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
-	int res = runQtApplication(argc, argv);
+	qtwebapp::LoggerWithFile *logger = new qtwebapp::LoggerWithFile(qApp);
+    logger->installMsgHandler();
+	int res = runQtApplication(argc, argv, logger);
 	qWarning("SDRangel quit.");
 	return res;
 }

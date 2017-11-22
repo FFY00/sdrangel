@@ -18,6 +18,7 @@
 #include "dsddemodgui.h"
 
 #include <device/devicesourceapi.h>
+#include "device/deviceuiset.h"
 #include <dsp/downchannelizer.h>
 #include <QDockWidget>
 #include <QMainWindow>
@@ -34,17 +35,12 @@
 #include "dsp/dspengine.h"
 #include "mainwindow.h"
 
+#include "dsddemodbaudrates.h"
 #include "dsddemod.h"
 
-const QString DSDDemodGUI::m_channelID = "sdrangel.channel.dsddemod";
-
-unsigned int DSDDemodBaudRates::m_rates[] = {2400, 4800};
-unsigned int DSDDemodBaudRates::m_nb_rates = 2;
-unsigned int DSDDemodBaudRates::m_defaultRateIndex = 1; // 4800 bauds
-
-DSDDemodGUI* DSDDemodGUI::create(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI)
+DSDDemodGUI* DSDDemodGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
 {
-    DSDDemodGUI* gui = new DSDDemodGUI(pluginAPI, deviceAPI);
+    DSDDemodGUI* gui = new DSDDemodGUI(pluginAPI, deviceUISet, rxChannel);
 	return gui;
 }
 
@@ -76,112 +72,31 @@ void DSDDemodGUI::setCenterFrequency(qint64 centerFrequency)
 
 void DSDDemodGUI::resetToDefaults()
 {
+	m_settings.resetToDefaults();
 	blockApplySettings(true);
-
-	ui->rfBW->setValue(100); // x100 Hz
-	ui->demodGain->setValue(100); // 100ths
-	ui->fmDeviation->setValue(50); // x100 Hz
-	ui->volume->setValue(20); // /10.0
-	ui->baudRate->setCurrentIndex(DSDDemodBaudRates::getDefaultRateIndex());
-	ui->squelchGate->setValue(5);
-	ui->squelch->setValue(-40);
-	ui->deltaFrequency->setValue(0);
-	ui->symbolPLLLock->setChecked(true);
-
+	displaySettings();
 	blockApplySettings(false);
 	applySettings();
 }
 
 QByteArray DSDDemodGUI::serialize() const
 {
-	SimpleSerializer s(1);
-	s.writeS32(1, m_channelMarker.getCenterFrequency());
-	s.writeS32(2, ui->rfBW->value());
-	s.writeS32(3, ui->demodGain->value());
-	s.writeS32(4, ui->fmDeviation->value());
-	s.writeS32(5, ui->squelch->value());
-	s.writeU32(7, m_channelMarker.getColor().rgb());
-	s.writeS32(8, ui->squelchGate->value());
-	s.writeS32(9, ui->volume->value());
-    s.writeBlob(10, ui->scopeGUI->serialize());
-    s.writeS32(11, ui->baudRate->currentIndex());
-    s.writeBool(12, m_enableCosineFiltering);
-    s.writeBool(13, m_syncOrConstellation);
-    s.writeBool(14, m_slot1On);
-    s.writeBool(15, m_slot2On);
-    s.writeBool(16, m_tdmaStereo);
-    s.writeBlob(17, m_channelMarker.serialize());
-	return s.final();
+    return m_settings.serialize();
 }
 
 bool DSDDemodGUI::deserialize(const QByteArray& data)
 {
-	SimpleDeserializer d(data);
-
-	if (!d.isValid())
-	{
-		resetToDefaults();
-		return false;
-	}
-
-	if (d.getVersion() == 1)
-	{
-		QByteArray bytetmp;
-		QString strtmp;
-		quint32 u32tmp;
-		qint32 tmp;
-
-		blockApplySettings(true);
-		m_channelMarker.blockSignals(true);
-
-        d.readBlob(17, &bytetmp);
-        m_channelMarker.deserialize(bytetmp);
-
-		d.readS32(1, &tmp, 0);
-		m_channelMarker.setCenterFrequency(tmp);
-		d.readS32(2, &tmp, 4);
-		ui->rfBW->setValue(tmp);
-		d.readS32(3, &tmp, 3);
-		ui->demodGain->setValue(tmp);
-		d.readS32(4, &tmp, 20);
-		ui->fmDeviation->setValue(tmp);
-		d.readS32(5, &tmp, -40);
-		ui->squelch->setValue(tmp);
-
-		if(d.readU32(7, &u32tmp))
-		{
-			m_channelMarker.setColor(u32tmp);
-		}
-
-		d.readS32(8, &tmp, 5);
-		ui->squelchGate->setValue(tmp);
-        d.readS32(9, &tmp, 20);
-        ui->volume->setValue(tmp);
-        d.readBlob(10, &bytetmp);
-        ui->scopeGUI->deserialize(bytetmp);
-        d.readS32(11, &tmp, 20);
-        ui->baudRate->setCurrentIndex(tmp);
-        d.readBool(12, &m_enableCosineFiltering, false);
-        d.readBool(13, &m_syncOrConstellation, false);
-        d.readBool(14, &m_slot1On, false);
-        d.readBool(15, &m_slot2On, false);
-        d.readBool(16, &m_tdmaStereo, false);
-
-        this->setWindowTitle(m_channelMarker.getTitle());
-        displayUDPAddress();
-
-		blockApplySettings(false);
-		m_channelMarker.blockSignals(false);
-
-		updateMyPosition(); // we do it also here to be able to refresh with latest settings
-		applySettings(true);
-		return true;
-	}
-	else
-	{
-		resetToDefaults();
-		return false;
-	}
+    if (m_settings.deserialize(data))
+    {
+        displaySettings();
+        applySettings(true);
+        return true;
+    }
+    else
+    {
+        resetToDefaults();
+        return false;
+    }
 }
 
 bool DSDDemodGUI::handleMessage(const Message& message __attribute__((unused)))
@@ -192,79 +107,92 @@ bool DSDDemodGUI::handleMessage(const Message& message __attribute__((unused)))
 void DSDDemodGUI::on_deltaFrequency_changed(qint64 value)
 {
     m_channelMarker.setCenterFrequency(value);
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    applySettings();
 }
 
 void DSDDemodGUI::on_rfBW_valueChanged(int value)
 {
-	qDebug() << "DSDDemodGUI::on_rfBW_valueChanged" << value * 100;
 	m_channelMarker.setBandwidth(value * 100);
+	m_settings.m_rfBandwidth = value * 100.0;
+    ui->rfBWText->setText(QString("%1k").arg(value / 10.0, 0, 'f', 1));
 	applySettings();
 }
 
-void DSDDemodGUI::on_demodGain_valueChanged(int value __attribute__((unused)))
+void DSDDemodGUI::on_demodGain_valueChanged(int value)
 {
+    m_settings.m_demodGain = value / 100.0;
+    ui->demodGainText->setText(QString("%1").arg(value / 100.0, 0, 'f', 2));
 	applySettings();
 }
 
-void DSDDemodGUI::on_fmDeviation_valueChanged(int value __attribute__((unused)))
+void DSDDemodGUI::on_fmDeviation_valueChanged(int value)
 {
+    m_settings.m_fmDeviation = value * 100.0;
+    ui->fmDeviationText->setText(QString("%1k").arg(value / 10.0, 0, 'f', 1));
 	applySettings();
 }
 
-void DSDDemodGUI::on_volume_valueChanged(int value __attribute__((unused)))
+void DSDDemodGUI::on_volume_valueChanged(int value)
 {
+    m_settings.m_volume= value / 10.0;
+    ui->volumeText->setText(QString("%1").arg(value / 10.0, 0, 'f', 1));
     applySettings();
 }
 
-void DSDDemodGUI::on_baudRate_currentIndexChanged(int index __attribute__((unused)))
+void DSDDemodGUI::on_baudRate_currentIndexChanged(int index)
 {
+    m_settings.m_baudRate = DSDDemodBaudRates::getRate(index);
     applySettings();
 }
 
 void DSDDemodGUI::on_enableCosineFiltering_toggled(bool enable)
 {
-	m_enableCosineFiltering = enable;
+    m_settings.m_enableCosineFiltering = enable;
 	applySettings();
 }
 
 void DSDDemodGUI::on_syncOrConstellation_toggled(bool checked)
 {
-    m_syncOrConstellation = checked;
+    m_settings.m_syncOrConstellation = checked;
     applySettings();
 }
 
 void DSDDemodGUI::on_slot1On_toggled(bool checked)
 {
-    m_slot1On = checked;
+    m_settings.m_slot1On = checked;
     applySettings();
 }
 
 void DSDDemodGUI::on_slot2On_toggled(bool checked)
 {
-    m_slot2On = checked;
+    m_settings.m_slot2On = checked;
     applySettings();
 }
 
 void DSDDemodGUI::on_tdmaStereoSplit_toggled(bool checked)
 {
-    m_tdmaStereo = checked;
+    m_settings.m_tdmaStereo = checked;
     applySettings();
 }
 
-void DSDDemodGUI::on_squelchGate_valueChanged(int value __attribute__((unused)))
+void DSDDemodGUI::on_squelchGate_valueChanged(int value)
 {
+    m_settings.m_squelchGate = value;
+    ui->squelchGateText->setText(QString("%1").arg(value * 10.0, 0, 'f', 0));
 	applySettings();
 }
 
 void DSDDemodGUI::on_squelch_valueChanged(int value)
 {
 	ui->squelchText->setText(QString("%1").arg(value / 10.0, 0, 'f', 1));
+	m_settings.m_squelch = value / 10.0;
 	applySettings();
 }
 
 void DSDDemodGUI::on_audioMute_toggled(bool checked)
 {
-    m_audioMute = checked;
+    m_settings.m_audioMute = checked;
     applySettings();
 }
 
@@ -275,11 +203,13 @@ void DSDDemodGUI::on_symbolPLLLock_toggled(bool checked)
     } else {
         ui->symbolPLLLock->setStyleSheet("QToolButton { background:rgb(53,53,53); }");
     }
+    m_settings.m_pllLock = checked;
     applySettings();
 }
 
-void DSDDemodGUI::on_udpOutput_toggled(bool checked __attribute__((unused)))
+void DSDDemodGUI::on_udpOutput_toggled(bool checked)
 {
+    m_settings.m_udpCopyAudio = checked;
     applySettings();
 }
 
@@ -297,13 +227,25 @@ void DSDDemodGUI::onMenuDialogCalled(const QPoint &p)
     BasicChannelSettingsDialog dialog(&m_channelMarker, this);
     dialog.move(p);
     dialog.exec();
+
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    m_settings.m_udpAddress = m_channelMarker.getUDPAddress(),
+    m_settings.m_udpPort =  m_channelMarker.getUDPSendPort(),
+    m_settings.m_rgbColor = m_channelMarker.getColor().rgb();
+    m_settings.m_title = m_channelMarker.getTitle();
+
+    setWindowTitle(m_settings.m_title);
+    setTitleColor(m_settings.m_rgbColor);
+    displayUDPAddress();
+
+    applySettings();
 }
 
-DSDDemodGUI::DSDDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidget* parent) :
+DSDDemodGUI::DSDDemodGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel, QWidget* parent) :
 	RollupWidget(parent),
 	ui(new Ui::DSDDemodGUI),
 	m_pluginAPI(pluginAPI),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
 	m_channelMarker(this),
 	m_doApplySettings(true),
 	m_signalFormat(signalFormatNone),
@@ -322,15 +264,16 @@ DSDDemodGUI::DSDDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidg
     connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(onMenuDialogCalled(const QPoint &)));
 
 	m_scopeVis = new ScopeVis(ui->glScope);
-	m_dsdDemod = new DSDDemod(m_scopeVis);
-	m_dsdDemod->registerGUI(this);
+	m_dsdDemod = (DSDDemod*) rxChannel; //new DSDDemod(m_deviceUISet->m_deviceSourceAPI);
+	m_dsdDemod->setScopeSink(m_scopeVis);
+	m_dsdDemod->setMessageQueueToGUI(getInputMessageQueue());
 
     ui->glScope->setSampleRate(48000);
     m_scopeVis->setSampleRate(48000);
 
-	ui->glScope->connectTimer(m_pluginAPI->getMainWindow()->getMasterTimer());
+	ui->glScope->connectTimer(MainWindow::getInstance()->getMasterTimer());
 
-	connect(&m_pluginAPI->getMainWindow()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
+	connect(&MainWindow::getInstance()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
 
     ui->audioMute->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
 
@@ -339,45 +282,44 @@ DSDDemodGUI::DSDDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidg
     ui->deltaFrequency->setValueRange(false, 7, -9999999, 9999999);
     ui->channelPowerMeter->setColorTheme(LevelMeterSignalDB::ColorGreenAndBlue);
 
-	m_channelizer = new DownChannelizer(m_dsdDemod);
-	m_threadedChannelizer = new ThreadedBasebandSampleSink(m_channelizer, this);
-	m_deviceAPI->addThreadedSink(m_threadedChannelizer);
-
-	//m_channelMarker = new ChannelMarker(this);
-	m_channelMarker.setTitle(windowTitle());
+    m_channelMarker.blockSignals(true);
 	m_channelMarker.setColor(Qt::cyan);
 	m_channelMarker.setBandwidth(10000);
 	m_channelMarker.setCenterFrequency(0);
-	m_channelMarker.setVisible(true);
+    m_channelMarker.setTitle("DSD Demodulator");
+    m_channelMarker.setUDPAddress("127.0.0.1");
+    m_channelMarker.setUDPSendPort(9999);
+    m_channelMarker.blockSignals(false);
+	m_channelMarker.setVisible(true); // activate signal on the last setting only
 
-	connect(&m_channelMarker, SIGNAL(changed()), this, SLOT(channelMarkerChanged()));
+	m_deviceUISet->registerRxChannelInstance(DSDDemod::m_channelID, this);
+	m_deviceUISet->addChannelMarker(&m_channelMarker);
+	m_deviceUISet->addRollupWidget(this);
 
-	m_deviceAPI->registerChannelInstance(m_channelID, this);
-	m_deviceAPI->addChannelMarker(&m_channelMarker);
-	m_deviceAPI->addRollupWidget(this);
+	connect(&m_channelMarker, SIGNAL(changedByCursor()), this, SLOT(channelMarkerChangedByCursor()));
+    connect(&m_channelMarker, SIGNAL(highlightedByCursor()), this, SLOT(channelMarkerHighlightedByCursor()));
 
 	ui->scopeGUI->setBuddies(m_scopeVis->getInputMessageQueue(), m_scopeVis, ui->glScope);
 
+	m_settings.setChannelMarker(&m_channelMarker);
+	m_settings.setScopeGUI(ui->scopeGUI);
+
 	updateMyPosition();
-	displayUDPAddress();
+	displaySettings();
 	applySettings(true);
 }
 
 DSDDemodGUI::~DSDDemodGUI()
 {
-    m_deviceAPI->removeChannelInstance(this);
-	m_deviceAPI->removeThreadedSink(m_threadedChannelizer);
-	delete m_threadedChannelizer;
-	delete m_channelizer;
-	delete m_dsdDemod;
-	//delete m_channelMarker;
+    m_deviceUISet->removeRxChannelInstance(this);
+	delete m_dsdDemod; // TODO: check this: when the GUI closes it has to delete the demodulator
 	delete ui;
 }
 
 void DSDDemodGUI::updateMyPosition()
 {
-    float latitude = m_pluginAPI->getMainWindow()->getMainSettings().getLatitude();
-    float longitude = m_pluginAPI->getMainWindow()->getMainSettings().getLongitude();
+    float latitude = MainWindow::getInstance()->getMainSettings().getLatitude();
+    float longitude = MainWindow::getInstance()->getMainSettings().getLongitude();
 
     if ((m_myLatitude != latitude) || (m_myLongitude != longitude))
     {
@@ -389,7 +331,56 @@ void DSDDemodGUI::updateMyPosition()
 
 void DSDDemodGUI::displayUDPAddress()
 {
-    ui->udpOutput->setToolTip(QString("Copy audio output to UDP %1:%2").arg(m_channelMarker.getUDPAddress()).arg(m_channelMarker.getUDPSendPort()));
+    ui->udpOutput->setToolTip(QString("Copy audio output to UDP %1:%2").arg(m_settings.m_udpAddress).arg(m_settings.m_udpPort));
+}
+
+void DSDDemodGUI::displaySettings()
+{
+    m_channelMarker.blockSignals(true);
+    m_channelMarker.setCenterFrequency(m_settings.m_inputFrequencyOffset);
+    m_channelMarker.setColor(m_settings.m_rgbColor);
+    m_channelMarker.setTitle(m_settings.m_title);
+    m_channelMarker.blockSignals(false);
+    setTitleColor(m_settings.m_rgbColor); // activate signal on the last setting only
+
+    setTitleColor(m_settings.m_rgbColor);
+    setWindowTitle(m_channelMarker.getTitle());
+    displayUDPAddress();
+
+    blockApplySettings(true);
+
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+
+    ui->rfBW->setValue(m_settings.m_rfBandwidth / 100.0);
+    ui->rfBWText->setText(QString("%1k").arg(ui->rfBW->value() / 10.0, 0, 'f', 1));
+
+    ui->fmDeviation->setValue(m_settings.m_fmDeviation / 100.0);
+    ui->fmDeviationText->setText(QString("%1k").arg(ui->fmDeviation->value() / 10.0, 0, 'f', 1));
+
+    ui->squelch->setValue(m_settings.m_squelch * 10.0);
+    ui->squelchText->setText(QString("%1").arg(ui->squelch->value() / 10.0, 0, 'f', 1));
+
+    ui->squelchGate->setValue(m_settings.m_squelchGate);
+    ui->squelchGateText->setText(QString("%1").arg(ui->squelchGate->value() * 10.0, 0, 'f', 0));
+
+    ui->demodGain->setValue(m_settings.m_demodGain * 100.0);
+    ui->demodGainText->setText(QString("%1").arg(ui->demodGain->value() / 100.0, 0, 'f', 2));
+
+    ui->volume->setValue(m_settings.m_volume * 10.0);
+    ui->volumeText->setText(QString("%1").arg(ui->volume->value() / 10.0, 0, 'f', 1));
+
+    ui->enableCosineFiltering->setChecked(m_settings.m_enableCosineFiltering);
+    ui->syncOrConstellation->setChecked(m_settings.m_syncOrConstellation);
+    ui->slot1On->setChecked(m_settings.m_slot1On);
+    ui->slot2On->setChecked(m_settings.m_slot2On);
+    ui->tdmaStereoSplit->setChecked(m_settings.m_tdmaStereo);
+    ui->audioMute->setChecked(m_settings.m_audioMute);
+    ui->udpOutput->setChecked(m_settings.m_udpCopyAudio);
+    ui->symbolPLLLock->setChecked(m_settings.m_pllLock);
+
+    ui->baudRate->setCurrentIndex(DSDDemodBaudRates::getRateIndex(m_settings.m_baudRate));
+
+    blockApplySettings(false);
 }
 
 void DSDDemodGUI::applySettings(bool force)
@@ -398,58 +389,23 @@ void DSDDemodGUI::applySettings(bool force)
 	{
 		qDebug() << "DSDDemodGUI::applySettings";
 
-		setTitleColor(m_channelMarker.getColor());
+        DSDDemod::MsgConfigureChannelizer* channelConfigMsg = DSDDemod::MsgConfigureChannelizer::create(
+                48000, m_channelMarker.getCenterFrequency());
+        m_dsdDemod->getInputMessageQueue()->push(channelConfigMsg);
 
-		m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-			48000,
-			m_channelMarker.getCenterFrequency());
-
-		ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
-	    ui->rfBWText->setText(QString("%1k").arg(ui->rfBW->value() / 10.0, 0, 'f', 1));
-	    ui->demodGainText->setText(QString("%1").arg(ui->demodGain->value() / 100.0, 0, 'f', 2));
-	    ui->fmDeviationText->setText(QString("%1k").arg(ui->fmDeviation->value() / 10.0, 0, 'f', 1));
-		ui->squelchGateText->setText(QString("%1").arg(ui->squelchGate->value() * 10.0, 0, 'f', 0));
-	    ui->volumeText->setText(QString("%1").arg(ui->volume->value() / 10.0, 0, 'f', 1));
-	    ui->enableCosineFiltering->setChecked(m_enableCosineFiltering);
-	    ui->syncOrConstellation->setChecked(m_syncOrConstellation);
-	    ui->slot1On->setChecked(m_slot1On);
-        ui->slot2On->setChecked(m_slot2On);
-        ui->tdmaStereoSplit->setChecked(m_tdmaStereo);
-
-		m_dsdDemod->configure(m_dsdDemod->getInputMessageQueue(),
-			ui->rfBW->value(),
-			ui->demodGain->value(),
-			ui->fmDeviation->value(),
-			ui->volume->value(),
-			DSDDemodBaudRates::getRate(ui->baudRate->currentIndex()),
-			ui->squelchGate->value(), // in 10ths of ms
-			ui->squelch->value(),
-			ui->audioMute->isChecked(),
-			m_enableCosineFiltering,
-			m_syncOrConstellation,
-			m_slot1On,
-			m_slot2On,
-			m_tdmaStereo,
-			ui->symbolPLLLock->isChecked(),
-			ui->udpOutput->isChecked(),
-			m_channelMarker.getUDPAddress(),
-			m_channelMarker.getUDPSendPort(),
-			force);
+        DSDDemod::MsgConfigureDSDDemod* message = DSDDemod::MsgConfigureDSDDemod::create( m_settings, force);
+        m_dsdDemod->getInputMessageQueue()->push(message);
 	}
 }
 
 void DSDDemodGUI::leaveEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(false);
-	blockApplySettings(false);
 }
 
 void DSDDemodGUI::enterEvent(QEvent*)
 {
-	blockApplySettings(true);
 	m_channelMarker.setHighlighted(true);
-	blockApplySettings(false);
 }
 
 void DSDDemodGUI::blockApplySettings(bool block)
@@ -596,13 +552,17 @@ void DSDDemodGUI::formatStatusText()
     m_formatStatusText[82] = '\0'; // guard
 }
 
-void DSDDemodGUI::channelMarkerChanged()
+void DSDDemodGUI::channelMarkerChangedByCursor()
 {
-    this->setWindowTitle(m_channelMarker.getTitle());
-    displayUDPAddress();
+    ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
+    m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
     applySettings();
 }
 
+void DSDDemodGUI::channelMarkerHighlightedByCursor()
+{
+    setHighlighted(m_channelMarker.getHighlighted());
+}
 
 void DSDDemodGUI::tick()
 {
@@ -682,29 +642,4 @@ void DSDDemodGUI::tick()
 	}
 
 	m_tickCount++;
-}
-
-unsigned int DSDDemodBaudRates::getRate(unsigned int rate_index)
-{
-    if (rate_index < m_nb_rates)
-    {
-        return m_rates[rate_index];
-    }
-    else
-    {
-        return m_rates[m_defaultRateIndex];
-    }
-}
-
-unsigned int DSDDemodBaudRates::getRateIndex(unsigned int rate)
-{
-    for (unsigned int i=0; i < m_nb_rates; i++)
-    {
-        if (rate == m_rates[i])
-        {
-            return i;
-        }
-    }
-
-    return m_defaultRateIndex;
 }

@@ -17,30 +17,31 @@
 #ifndef PLUGINS_CHANNELTX_MODWFM_WFMMODGUI_H_
 #define PLUGINS_CHANNELTX_MODWFM_WFMMODGUI_H_
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include "gui/rollupwidget.h"
 #include "dsp/channelmarker.h"
 #include "dsp/movingaverage.h"
+#include "util/messagequeue.h"
 
 #include "wfmmod.h"
+#include "wfmmodsettings.h"
 
 class PluginAPI;
-class DeviceSinkAPI;
-
+class DeviceUISet;
+class BasebandSampleSource;
 class ThreadedBasebandSampleSource;
 class UpChannelizer;
-class WFMMod;
 
 namespace Ui {
     class WFMModGUI;
 }
 
-class WFMModGUI : public RollupWidget, public PluginInstanceUI {
+class WFMModGUI : public RollupWidget, public PluginInstanceGUI {
     Q_OBJECT
 
 public:
-    static WFMModGUI* create(PluginAPI* pluginAPI, DeviceSinkAPI *deviceAPI);
-    void destroy();
+    static WFMModGUI* create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx);
+    virtual void destroy();
 
     void setName(const QString& name);
     QString getName() const;
@@ -50,13 +51,56 @@ public:
     void resetToDefaults();
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
-
+    virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
     virtual bool handleMessage(const Message& message);
 
-    static const QString m_channelID;
+public slots:
+    void channelMarkerChangedByCursor();
+
+private:
+    Ui::WFMModGUI* ui;
+    PluginAPI* m_pluginAPI;
+    DeviceUISet* m_deviceUISet;
+    ChannelMarker m_channelMarker;
+    WFMModSettings m_settings;
+    bool m_doApplySettings;
+
+//    ThreadedBasebandSampleSource* m_threadedChannelizer;
+//    UpChannelizer* m_channelizer;
+    WFMMod* m_wfmMod;
+    MovingAverage<double> m_channelPowerDbAvg;
+
+    QString m_fileName;
+    quint32 m_recordLength;
+    int m_recordSampleRate;
+    int m_samplesCount;
+    std::size_t m_tickCount;
+    bool m_enableNavTime;
+    WFMMod::WFMModInputAF m_modAFInput;
+    MessageQueue m_inputMessageQueue;
+
+    explicit WFMModGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx, QWidget* parent = 0);
+    virtual ~WFMModGUI();
+
+    void blockApplySettings(bool block);
+    void applySettings(bool force = false);
+    void displaySettings();
+    void updateWithStreamData();
+    void updateWithStreamTime();
+
+    void leaveEvent(QEvent*);
+    void enterEvent(QEvent*);
+
+    static int requiredBW(int rfBW)
+    {
+        if (rfBW <= 96000) {
+            return 96000;
+        } else {
+            return (3*rfBW)/2;
+        }
+    }
 
 private slots:
-    void viewChanged();
     void handleSourceMessages();
 
     void on_deltaFrequency_changed(qint64 value);
@@ -76,54 +120,9 @@ private slots:
     void on_showFileDialog_clicked(bool checked);
 
     void onWidgetRolled(QWidget* widget, bool rollDown);
-    void onMenuDoubleClicked();
 
     void configureFileName();
     void tick();
-
-private:
-    Ui::WFMModGUI* ui;
-    PluginAPI* m_pluginAPI;
-    DeviceSinkAPI* m_deviceAPI;
-    ChannelMarker m_channelMarker;
-    bool m_basicSettingsShown;
-    bool m_doApplySettings;
-
-    ThreadedBasebandSampleSource* m_threadedChannelizer;
-    UpChannelizer* m_channelizer;
-    WFMMod* m_wfmMod;
-    MovingAverage<double> m_channelPowerDbAvg;
-
-    QString m_fileName;
-    quint32 m_recordLength;
-    int m_recordSampleRate;
-    int m_samplesCount;
-    std::size_t m_tickCount;
-    bool m_enableNavTime;
-    WFMMod::WFMModInputAF m_modAFInput;
-
-    static const int m_rfBW[];
-    static const int m_nbRfBW;
-
-    explicit WFMModGUI(PluginAPI* pluginAPI, DeviceSinkAPI *deviceAPI, QWidget* parent = NULL);
-    virtual ~WFMModGUI();
-
-    void blockApplySettings(bool block);
-    void applySettings();
-    void updateWithStreamData();
-    void updateWithStreamTime();
-
-    void leaveEvent(QEvent*);
-    void enterEvent(QEvent*);
-
-    static int requiredBW(int rfBW)
-    {
-        if (rfBW <= 96000) {
-            return 96000;
-        } else {
-            return (3*rfBW)/2;
-        }
-    }
 };
 
 #endif /* PLUGINS_CHANNELTX_MODWFM_WFMMODGUI_H_ */

@@ -58,6 +58,11 @@ SDRPlayInput::~SDRPlayInput()
     closeDevice();
 }
 
+void SDRPlayInput::destroy()
+{
+    delete this;
+}
+
 bool SDRPlayInput::openDevice()
 {
     m_devNumber = m_deviceAPI->getSampleSourceSequence();
@@ -227,7 +232,7 @@ bool SDRPlayInput::handleMessage(const Message& message)
         // standard changes
         else
         {
-            if (!applySettings(settings, false, false))
+            if (!applySettings(settings, false, conf.getForce()))
             {
                 qDebug("SDRPlayInput::handleMessage: config error");
             }
@@ -314,7 +319,9 @@ bool SDRPlayInput::applySettings(const SDRPlaySettings& settings, bool forwardCh
                             mirisdr_get_tuner_gain(m_dev)
                     );
 
-                    getOutputMessageQueueToGUI()->push(message);
+                    if (getMessageQueueToGUI()) {
+                        getMessageQueueToGUI()->push(message);
+                    }
                 }
             }
         }
@@ -413,7 +420,10 @@ bool SDRPlayInput::applySettings(const SDRPlaySettings& settings, bool forwardCh
                     mirisdr_get_baseband_gain(m_dev),
                     mirisdr_get_tuner_gain(m_dev)
             );
-            getOutputMessageQueueToGUI()->push(message);
+
+            if (getMessageQueueToGUI()) {
+                getMessageQueueToGUI()->push(message);
+            }
         }
     }
 
@@ -531,7 +541,7 @@ bool SDRPlayInput::applySettings(const SDRPlaySettings& settings, bool forwardCh
         int sampleRate = getSampleRate();
         DSPSignalNotification *notif = new DSPSignalNotification(sampleRate, m_settings.m_centerFrequency);
         m_fileSink->handleMessage(*notif); // forward to file sink
-        m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+        m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
     }
 
     return true;

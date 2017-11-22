@@ -16,19 +16,25 @@
 
 #include <QDebug>
 
+#include "device/devicesinkapi.h"
 #include "dsp/upchannelizer.h"
+#include "dsp/threadedbasebandsamplesource.h"
 #include "util/db.h"
+
 #include "udpsinkmsg.h"
 #include "udpsink.h"
 
-MESSAGE_CLASS_DEFINITION(UDPSink::MsgUDPSinkConfigure, Message)
+MESSAGE_CLASS_DEFINITION(UDPSink::MsgConfigureUDPSink, Message)
+MESSAGE_CLASS_DEFINITION(UDPSink::MsgConfigureChannelizer, Message)
 MESSAGE_CLASS_DEFINITION(UDPSink::MsgUDPSinkSpectrum, Message)
 MESSAGE_CLASS_DEFINITION(UDPSink::MsgResetReadIndex, Message)
 
-UDPSink::UDPSink(MessageQueue* uiMessageQueue, UDPSinkGUI* udpSinkGUI, BasebandSampleSink* spectrum) :
-    m_uiMessageQueue(uiMessageQueue),
-    m_udpSinkGUI(udpSinkGUI),
-    m_spectrum(spectrum),
+const QString UDPSink::m_channelID = "sdrangel.channeltx.udpsink";
+
+UDPSink::UDPSink(DeviceSinkAPI *deviceAPI) :
+    m_deviceAPI(deviceAPI),
+    m_squelch(1e-6),
+    m_spectrum(0),
     m_spectrumEnabled(false),
     m_spectrumChunkSize(2160),
     m_spectrumChunkCounter(0),
@@ -50,16 +56,27 @@ UDPSink::UDPSink(MessageQueue* uiMessageQueue, UDPSinkGUI* udpSinkGUI, BasebandS
     m_settingsMutex(QMutex::Recursive)
 {
     setObjectName("UDPSink");
+
     m_udpHandler.setFeedbackMessageQueue(&m_inputMessageQueue);
-    m_SSBFilter = new fftfilt(m_config.m_lowCutoff / m_config.m_inputSampleRate, m_config.m_rfBandwidth / m_config.m_inputSampleRate, m_ssbFftLen);
+    m_SSBFilter = new fftfilt(m_settings.m_lowCutoff / m_settings.m_inputSampleRate, m_settings.m_rfBandwidth / m_settings.m_inputSampleRate, m_ssbFftLen);
     m_SSBFilterBuffer = new Complex[m_ssbFftLen>>1]; // filter returns data exactly half of its size
-    apply(true);
+
+    m_channelizer = new UpChannelizer(this);
+    m_threadedChannelizer = new ThreadedBasebandSampleSource(m_channelizer, this);
+    m_deviceAPI->addThreadedSource(m_threadedChannelizer);
+    m_deviceAPI->addChannelAPI(this);
+
+    applySettings(m_settings, true);
 }
 
 UDPSink::~UDPSink()
 {
     delete[] m_SSBFilterBuffer;
     delete m_SSBFilter;
+    m_deviceAPI->removeChannelAPI(this);
+    m_deviceAPI->removeThreadedSource(m_threadedChannelizer);
+    delete m_threadedChannelizer;
+    delete m_channelizer;
 }
 
 void UDPSink::start()
@@ -74,7 +91,7 @@ void UDPSink::stop()
 
 void UDPSink::pull(Sample& sample)
 {
-    if (m_running.m_channelMute)
+    if (m_settings.m_channelMute)
     {
         sample.m_real = 0.0f;
         sample.m_imag = 0.0f;
@@ -120,7 +137,7 @@ void UDPSink::pull(Sample& sample)
 
 void UDPSink::modulateSample()
 {
-    if (m_running.m_sampleFormat == FormatS16LE) // Linear I/Q transponding
+    if (m_settings.m_sampleFormat == UDPSinkSettings::FormatS16LE) // Linear I/Q transponding
     {
         Sample s;
 
@@ -134,8 +151,8 @@ void UDPSink::modulateSample()
 
         if (m_squelchOpen)
         {
-            m_modSample.real(s.m_real * m_running.m_gainOut);
-            m_modSample.imag(s.m_imag * m_running.m_gainOut);
+            m_modSample.real(s.m_real * m_settings.m_gainOut);
+            m_modSample.imag(s.m_imag * m_settings.m_gainOut);
             calculateLevel(m_modSample);
         }
         else
@@ -144,7 +161,7 @@ void UDPSink::modulateSample()
             m_modSample.imag(0.0f);
         }
     }
-    else if (m_running.m_sampleFormat == FormatNFM)
+    else if (m_settings.m_sampleFormat == UDPSinkSettings::FormatNFM)
     {
         FixReal t;
         readMonoSample(t);
@@ -156,9 +173,9 @@ void UDPSink::modulateSample()
 
         if (m_squelchOpen)
         {
-            m_modPhasor += (m_running.m_fmDeviation / m_running.m_inputSampleRate) * (t / 32768.0f) * M_PI * 2.0f;
-            m_modSample.real(cos(m_modPhasor) * 10362.2f * m_running.m_gainOut);
-            m_modSample.imag(sin(m_modPhasor) * 10362.2f * m_running.m_gainOut);
+            m_modPhasor += (m_settings.m_fmDeviation / m_settings.m_inputSampleRate) * (t / 32768.0f) * M_PI * 2.0f;
+            m_modSample.real(cos(m_modPhasor) * 10362.2f * m_settings.m_gainOut);
+            m_modSample.imag(sin(m_modPhasor) * 10362.2f * m_settings.m_gainOut);
             calculateLevel(m_modSample);
         }
         else
@@ -167,7 +184,7 @@ void UDPSink::modulateSample()
             m_modSample.imag(0.0f);
         }
     }
-    else if (m_running.m_sampleFormat == FormatAM)
+    else if (m_settings.m_sampleFormat == UDPSinkSettings::FormatAM)
     {
         FixReal t;
         readMonoSample(t);
@@ -178,7 +195,7 @@ void UDPSink::modulateSample()
 
         if (m_squelchOpen)
         {
-            m_modSample.real(((t / 32768.0f)*m_running.m_amModFactor*m_running.m_gainOut + 1.0f) * 16384.0f); // modulate and scale zero frequency carrier
+            m_modSample.real(((t / 32768.0f)*m_settings.m_amModFactor*m_settings.m_gainOut + 1.0f) * 16384.0f); // modulate and scale zero frequency carrier
             m_modSample.imag(0.0f);
             calculateLevel(m_modSample);
         }
@@ -188,7 +205,7 @@ void UDPSink::modulateSample()
             m_modSample.imag(0.0f);
         }
     }
-    else if ((m_running.m_sampleFormat == FormatLSB) || (m_running.m_sampleFormat == FormatUSB))
+    else if ((m_settings.m_sampleFormat == UDPSinkSettings::FormatLSB) || (m_settings.m_sampleFormat == UDPSinkSettings::FormatUSB))
     {
         FixReal t;
         Complex c, ci;
@@ -203,10 +220,10 @@ void UDPSink::modulateSample()
 
         if (m_squelchOpen)
         {
-            ci.real((t / 32768.0f) * m_running.m_gainOut);
+            ci.real((t / 32768.0f) * m_settings.m_gainOut);
             ci.imag(0.0f);
 
-            n_out = m_SSBFilter->runSSB(ci, &filtered, (m_running.m_sampleFormat == FormatUSB));
+            n_out = m_SSBFilter->runSSB(ci, &filtered, (m_settings.m_sampleFormat == UDPSinkSettings::FormatUSB));
 
             if (n_out > 0)
             {
@@ -242,7 +259,7 @@ void UDPSink::modulateSample()
         m_sampleBuffer.push_back(s);
         m_spectrumChunkCounter++;
     }
-    else
+    else if (m_spectrum)
     {
         m_spectrum->feed(m_sampleBuffer.begin(), m_sampleBuffer.end(), false);
         m_sampleBuffer.clear();
@@ -295,56 +312,65 @@ bool UDPSink::handleMessage(const Message& cmd)
     {
         UpChannelizer::MsgChannelizerNotification& notif = (UpChannelizer::MsgChannelizerNotification&) cmd;
 
-        m_config.m_basebandSampleRate = notif.getBasebandSampleRate();
-        m_config.m_outputSampleRate = notif.getSampleRate();
-        m_config.m_inputFrequencyOffset = notif.getFrequencyOffset();
+        UDPSinkSettings settings = m_settings;
 
-        apply(false);
+        settings.m_basebandSampleRate = notif.getBasebandSampleRate();
+        settings.m_outputSampleRate = notif.getSampleRate();
+        settings.m_inputFrequencyOffset = notif.getFrequencyOffset();
+
+        applySettings(settings);
 
         qDebug() << "UDPSink::handleMessage: MsgChannelizerNotification:"
-                << " m_basebandSampleRate: " << m_config.m_basebandSampleRate
-                << " m_outputSampleRate: " << m_config.m_outputSampleRate
-                << " m_inputFrequencyOffset: " << m_config.m_inputFrequencyOffset;
+                << " m_basebandSampleRate: " << settings.m_basebandSampleRate
+                << " m_outputSampleRate: " << settings.m_outputSampleRate
+                << " m_inputFrequencyOffset: " << settings.m_inputFrequencyOffset;
 
         return true;
     }
-    else if (MsgUDPSinkConfigure::match(cmd))
+    else if (MsgConfigureChannelizer::match(cmd))
     {
-        MsgUDPSinkConfigure& cfg = (MsgUDPSinkConfigure&) cmd;
+        MsgConfigureChannelizer& cfg = (MsgConfigureChannelizer&) cmd;
 
-        m_config.m_sampleFormat = cfg.getSampleFormat();
-        m_config.m_inputSampleRate = cfg.getInputSampleRate();
-        m_config.m_rfBandwidth = cfg.getRFBandwidth();
-        m_config.m_fmDeviation = cfg.getFMDeviation();
-        m_config.m_udpAddressStr = cfg.getUDPAddress();
-        m_config.m_udpPort = cfg.getUDPPort();
-        m_config.m_channelMute = cfg.getChannelMute();
-        m_config.m_gainIn = cfg.getGainIn();
-        m_config.m_gainOut = cfg.getGainOut();
-        m_config.m_squelch = CalcDb::powerFromdB(cfg.getSquelchDB());
-        m_config.m_squelchGate = cfg.getSquelchGate();
-        m_config.m_squelchEnabled = cfg.getSquelchEnabled();
-        m_config.m_autoRWBalance = cfg.getAutoRWBalance();
-        m_config.m_stereoInput = cfg.getStereoInput();
+        m_channelizer->configure(m_channelizer->getInputMessageQueue(),
+            cfg.getSampleRate(),
+            cfg.getCenterFrequency());
 
-        apply(cfg.getForce());
+        qDebug() << "UDPSink::handleMessage: MsgConfigureChannelizer:"
+                << " sampleRate: " << cfg.getSampleRate()
+                << " centerFrequency: " << cfg.getCenterFrequency();
 
-        qDebug() << "UDPSink::handleMessage: MsgUDPSinkConfigure:"
-                << " m_sampleFormat: " << m_config.m_sampleFormat
-                << " m_inputSampleRate: " << m_config.m_inputSampleRate
-                << " m_rfBandwidth: " << m_config.m_rfBandwidth
-                << " m_fmDeviation: " << m_config.m_fmDeviation
-                << " m_udpAddressStr: " << m_config.m_udpAddressStr
-                << " m_udpPort: " << m_config.m_udpPort
-                << " m_channelMute: " << m_config.m_channelMute
-                << " m_gainIn: " << m_config.m_gainIn
-                << " m_gainOut: " << m_config.m_gainOut
-                << " squelchDB: " << cfg.getSquelchDB()
-                << " m_squelchGate: " << m_config.m_squelchGate
-                << " m_squelch: " << m_config.m_squelch
-                << " m_squelchEnabled: " << m_config.m_squelchEnabled
-                << " m_autoRWBalance: " << m_config.m_autoRWBalance
-                << " m_stereoInput: " << m_config.m_stereoInput;
+        return true;
+    }
+    else if (MsgConfigureUDPSink::match(cmd))
+    {
+        MsgConfigureUDPSink& cfg = (MsgConfigureUDPSink&) cmd;
+
+        UDPSinkSettings settings = cfg.getSettings();
+
+        // These settings are set with DownChannelizer::MsgChannelizerNotification
+        m_absoluteFrequencyOffset = settings.m_inputFrequencyOffset;
+        settings.m_basebandSampleRate = m_settings.m_basebandSampleRate;
+        settings.m_outputSampleRate = m_settings.m_outputSampleRate;
+        settings.m_inputFrequencyOffset = m_settings.m_inputFrequencyOffset;
+
+        applySettings(settings, cfg.getForce());
+
+        qDebug() << "UDPSink::handleMessage: MsgConfigureUDPSink:"
+                << " m_sampleFormat: " << settings.m_sampleFormat
+                << " m_inputSampleRate: " << settings.m_inputSampleRate
+                << " m_rfBandwidth: " << settings.m_rfBandwidth
+                << " m_fmDeviation: " << settings.m_fmDeviation
+                << " m_udpAddressStr: " << settings.m_udpAddress
+                << " m_udpPort: " << settings.m_udpPort
+                << " m_channelMute: " << settings.m_channelMute
+                << " m_gainIn: " << settings.m_gainIn
+                << " m_gainOut: " << settings.m_gainOut
+                << " m_squelchGate: " << settings.m_squelchGate
+                << " m_squelch: " << settings.m_squelch << "dB"
+                << " m_squelchEnabled: " << settings.m_squelchEnabled
+                << " m_autoRWBalance: " << settings.m_autoRWBalance
+                << " m_stereoInput: " << settings.m_stereoInput
+                << " force: " << cfg.getForce();
 
         return true;
     }
@@ -354,7 +380,7 @@ bool UDPSink::handleMessage(const Message& cmd)
         Real newSampleRate = m_actualInputSampleRate + cfg.getCorrectionFactor() * m_actualInputSampleRate;
 
         // exclude values too way out nominal sample rate (20%)
-        if ((newSampleRate < m_running.m_inputSampleRate * 1.2) && (newSampleRate >  m_running.m_inputSampleRate * 0.8))
+        if ((newSampleRate < m_settings.m_inputSampleRate * 1.2) && (newSampleRate >  m_settings.m_inputSampleRate * 0.8))
         {
             m_actualInputSampleRate = newSampleRate;
 
@@ -393,8 +419,8 @@ bool UDPSink::handleMessage(const Message& cmd)
             m_settingsMutex.lock();
             m_interpolatorDistanceRemain = 0;
             m_interpolatorConsumed = false;
-            m_interpolatorDistance = (Real) m_actualInputSampleRate / (Real) m_config.m_outputSampleRate;
-            //m_interpolator.create(48, m_actualInputSampleRate, m_config.m_rfBandwidth / 2.2, 3.0); // causes clicking: leaving at standard frequency
+            m_interpolatorDistance = (Real) m_actualInputSampleRate / (Real) m_settings.m_outputSampleRate;
+            //m_interpolator.create(48, m_actualInputSampleRate, m_settings.m_rfBandwidth / 2.2, 3.0); // causes clicking: leaving at standard frequency
             m_settingsMutex.unlock();
         }
 
@@ -431,131 +457,98 @@ bool UDPSink::handleMessage(const Message& cmd)
     }
 }
 
-void UDPSink::configure(MessageQueue* messageQueue,
-        SampleFormat sampleFormat,
-        Real outputSampleRate,
-        Real rfBandwidth,
-        int fmDeviation,
-        Real amModFactor,
-        const QString& udpAddress,
-        int udpPort,
-        bool channelMute,
-        Real gainIn,
-        Real gainOut,
-        Real squelchDB,
-        Real squelchGate,
-        bool squelchEnabled,
-        bool autoRWBalance,
-        bool stereoInput,
-        bool force)
-{
-    Message* cmd = MsgUDPSinkConfigure::create(sampleFormat,
-            outputSampleRate,
-            rfBandwidth,
-            fmDeviation,
-            amModFactor,
-            udpAddress,
-            udpPort,
-            channelMute,
-            gainIn,
-            gainOut,
-            squelchDB,
-            squelchGate,
-            squelchEnabled,
-            autoRWBalance,
-            stereoInput,
-            force);
-    messageQueue->push(cmd);
-}
-
-void UDPSink::setSpectrum(MessageQueue* messageQueue, bool enabled)
+void UDPSink::setSpectrum(bool enabled)
 {
     Message* cmd = MsgUDPSinkSpectrum::create(enabled);
-    messageQueue->push(cmd);
+    getInputMessageQueue()->push(cmd);
 }
 
-void UDPSink::resetReadIndex(MessageQueue* messageQueue)
+void UDPSink::resetReadIndex()
 {
     Message* cmd = MsgResetReadIndex::create();
-    messageQueue->push(cmd);
+    getInputMessageQueue()->push(cmd);
 }
 
-
-void UDPSink::apply(bool force)
+void UDPSink::applySettings(const UDPSinkSettings& settings, bool force)
 {
-    if ((m_config.m_inputFrequencyOffset != m_running.m_inputFrequencyOffset) ||
-        (m_config.m_outputSampleRate != m_running.m_outputSampleRate) || force)
+    if ((settings.m_inputFrequencyOffset != m_settings.m_inputFrequencyOffset) ||
+        (settings.m_outputSampleRate != m_settings.m_outputSampleRate) || force)
     {
         m_settingsMutex.lock();
-        m_carrierNco.setFreq(m_config.m_inputFrequencyOffset, m_config.m_outputSampleRate);
+        m_carrierNco.setFreq(settings.m_inputFrequencyOffset, settings.m_outputSampleRate);
         m_settingsMutex.unlock();
     }
 
-    if((m_config.m_outputSampleRate != m_running.m_outputSampleRate) ||
-       (m_config.m_rfBandwidth != m_running.m_rfBandwidth) ||
-       (m_config.m_inputSampleRate != m_running.m_inputSampleRate) || force)
+    if((settings.m_outputSampleRate != m_settings.m_outputSampleRate) ||
+       (settings.m_rfBandwidth != m_settings.m_rfBandwidth) ||
+       (settings.m_inputSampleRate != m_settings.m_inputSampleRate) || force)
     {
         m_settingsMutex.lock();
         m_interpolatorDistanceRemain = 0;
         m_interpolatorConsumed = false;
-        m_interpolatorDistance = (Real) m_config.m_inputSampleRate / (Real) m_config.m_outputSampleRate;
-        m_interpolator.create(48, m_config.m_inputSampleRate, m_config.m_rfBandwidth / 2.2, 3.0);
-        m_actualInputSampleRate = m_config.m_inputSampleRate;
+        m_interpolatorDistance = (Real) settings.m_inputSampleRate / (Real) settings.m_outputSampleRate;
+        m_interpolator.create(48, settings.m_inputSampleRate, settings.m_rfBandwidth / 2.2, 3.0);
+        m_actualInputSampleRate = settings.m_inputSampleRate;
         m_udpHandler.resetReadIndex();
         m_sampleRateSum = 0.0;
         m_sampleRateAvgCounter = 0;
-        m_spectrumChunkSize = m_config.m_inputSampleRate * 0.05; // 50 ms chunk
+        m_spectrumChunkSize = settings.m_inputSampleRate * 0.05; // 50 ms chunk
         m_spectrumChunkCounter = 0;
-        m_levelNbSamples = m_config.m_inputSampleRate * 0.01; // every 10 ms
+        m_levelNbSamples = settings.m_inputSampleRate * 0.01; // every 10 ms
         m_levelCalcCount = 0;
         m_peakLevel = 0.0f;
         m_levelSum = 0.0f;
-        m_udpHandler.resizeBuffer(m_config.m_inputSampleRate);
-        m_inMovingAverage.resize(m_config.m_inputSampleRate * 0.01, 1e-10); // 10 ms
-        m_squelchThreshold = m_config.m_inputSampleRate * m_config.m_squelchGate;
+        m_udpHandler.resizeBuffer(settings.m_inputSampleRate);
+        m_inMovingAverage.resize(settings.m_inputSampleRate * 0.01, 1e-10); // 10 ms
+        m_squelchThreshold = settings.m_inputSampleRate * settings.m_squelchGate;
         initSquelch(m_squelchOpen);
-        m_SSBFilter->create_filter(m_config.m_lowCutoff / m_config.m_inputSampleRate, m_config.m_rfBandwidth / m_config.m_inputSampleRate);
+        m_SSBFilter->create_filter(settings.m_lowCutoff / settings.m_inputSampleRate, settings.m_rfBandwidth / settings.m_inputSampleRate);
         m_settingsMutex.unlock();
     }
 
-    if ((m_config.m_squelchGate != m_running.m_squelchGate) || force)
+    if ((settings.m_squelch != m_settings.m_squelch) || force)
     {
-        m_squelchThreshold = m_config.m_outputSampleRate * m_config.m_squelchGate;
+        m_squelch = CalcDb::powerFromdB(settings.m_squelch);
+    }
+
+    if ((settings.m_squelchGate != m_settings.m_squelchGate) || force)
+    {
+        m_squelchThreshold = settings.m_outputSampleRate * settings.m_squelchGate;
         initSquelch(m_squelchOpen);
     }
 
-    if ((m_config.m_udpAddressStr != m_running.m_udpAddressStr) ||
-        (m_config.m_udpPort != m_running.m_udpPort) || force)
+    if ((settings.m_udpAddress != m_settings.m_udpAddress) ||
+        (settings.m_udpPort != m_settings.m_udpPort) || force)
     {
         m_settingsMutex.lock();
-        m_udpHandler.configureUDPLink(m_config.m_udpAddressStr, m_config.m_udpPort);
+        m_udpHandler.configureUDPLink(settings.m_udpAddress, settings.m_udpPort);
         m_settingsMutex.unlock();
     }
 
-    if ((m_config.m_channelMute != m_running.m_channelMute) || force)
+    if ((settings.m_channelMute != m_settings.m_channelMute) || force)
     {
-        if (!m_config.m_channelMute) {
+        if (!settings.m_channelMute) {
             m_udpHandler.resetReadIndex();
         }
     }
 
-    if ((m_config.m_autoRWBalance != m_running.m_autoRWBalance) || force)
+    if ((settings.m_autoRWBalance != m_settings.m_autoRWBalance) || force)
     {
         m_settingsMutex.lock();
-        m_udpHandler.setAutoRWBalance(m_config.m_autoRWBalance);
+        m_udpHandler.setAutoRWBalance(settings.m_autoRWBalance);
 
-        if (!m_config.m_autoRWBalance)
+        if (!settings.m_autoRWBalance)
         {
             m_interpolatorDistanceRemain = 0;
             m_interpolatorConsumed = false;
-            m_interpolatorDistance = (Real) m_config.m_inputSampleRate / (Real) m_config.m_outputSampleRate;
-            m_interpolator.create(48, m_config.m_inputSampleRate, m_config.m_rfBandwidth / 2.2, 3.0);
-            m_actualInputSampleRate = m_config.m_inputSampleRate;
+            m_interpolatorDistance = (Real) settings.m_inputSampleRate / (Real) settings.m_outputSampleRate;
+            m_interpolator.create(48, settings.m_inputSampleRate, settings.m_rfBandwidth / 2.2, 3.0);
+            m_actualInputSampleRate = settings.m_inputSampleRate;
             m_udpHandler.resetReadIndex();
         }
 
         m_settingsMutex.unlock();
     }
 
-    m_running = m_config;
+    m_settings = settings;
 }

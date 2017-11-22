@@ -29,16 +29,26 @@
 DevicePlutoSDRBox::DevicePlutoSDRBox(const std::string& uri) :
         m_lpfFIRRxGain(0),
         m_lpfFIRTxGain(0),
+        m_ctx(0),
+        m_devPhy(0),
+        m_devRx(0),
+        m_devTx(0),
         m_chnRx0(0),
-        m_chnTx0(0),
+        m_chnTx0i(0),
+        m_chnTx0q(0),
         m_rxBuf(0),
         m_txBuf(0),
         m_xoInitial(0)
 {
     m_ctx = iio_create_context_from_uri(uri.c_str());
-    m_devPhy = iio_context_find_device(m_ctx, "ad9361-phy");
-    m_devRx = iio_context_find_device(m_ctx, "cf-ad9361-lpc");
-    m_devTx = iio_context_find_device(m_ctx, "cf-ad9361-dds-core-lpc");
+
+    if (m_ctx)
+    {
+        m_devPhy = iio_context_find_device(m_ctx, "ad9361-phy");
+        m_devRx = iio_context_find_device(m_ctx, "cf-ad9361-lpc");
+        m_devTx = iio_context_find_device(m_ctx, "cf-ad9361-dds-core-lpc");
+    }
+
     m_valid = m_ctx && m_devPhy && m_devRx && m_devTx;
 
     if (m_valid) {
@@ -62,6 +72,21 @@ DevicePlutoSDRBox::~DevicePlutoSDRBox()
     closeRx();
     closeTx();
     if (m_ctx) { iio_context_destroy(m_ctx); }
+}
+
+bool DevicePlutoSDRBox::probeURI(const std::string& uri)
+{
+    bool retVal;
+    struct iio_context *ctx;
+
+    ctx = iio_create_context_from_uri(uri.c_str());
+    retVal = (ctx != 0);
+
+    if (ctx) {
+        iio_context_destroy(ctx);
+    }
+
+    return retVal;
 }
 
 void DevicePlutoSDRBox::set_params(DeviceType devType,
@@ -126,6 +151,7 @@ void DevicePlutoSDRBox::set_params(DeviceType devType,
         if (ret < 0)
         {
             std::string item;
+           char errstr[256];
 
             switch (type)
             {
@@ -142,7 +168,8 @@ void DevicePlutoSDRBox::set_params(DeviceType devType,
                 item = "unknown";
                 break;
             }
-            std::cerr << "DevicePlutoSDRBox::set_params: Unable to write " << item << " attribute " << key << "=" << val << ": " << ret << std::endl;
+            iio_strerror(-ret, errstr, 255);
+            std::cerr << "DevicePlutoSDRBox::set_params: Unable to write " << item << " attribute " << key << "=" << val << ": " << errstr << " (" << ret << ") " << std::endl;
         }
         else
         {
@@ -218,6 +245,8 @@ void DevicePlutoSDRBox::setFilter(const std::string &filterConfigStr)
 
 bool DevicePlutoSDRBox::openRx()
 {
+    if (!m_valid) { return false; }
+
     if (!m_chnRx0) {
         m_chnRx0 = iio_device_find_channel(m_devRx, "voltage0", false);
     }
@@ -243,14 +272,37 @@ bool DevicePlutoSDRBox::openRx()
 
 bool DevicePlutoSDRBox::openTx()
 {
-    if (!m_chnTx0) {
-        m_chnTx0 = iio_device_find_channel(m_devTx, "voltage0", true);
+    if (!m_valid) { return false; }
+
+    if (!m_chnTx0i) {
+        m_chnTx0i = iio_device_find_channel(m_devTx, "voltage0", true);
     }
 
-    if (m_chnTx0) {
-        iio_channel_enable(m_chnTx0);
-        const struct iio_data_format *df = iio_channel_get_data_format(m_chnTx0);
-        qDebug("DevicePlutoSDRBox::openTx: length: %u bits: %u shift: %u signed: %s be: %s with_scale: %s scale: %lf repeat: %u",
+    if (m_chnTx0i) {
+        iio_channel_enable(m_chnTx0i);
+        const struct iio_data_format *df = iio_channel_get_data_format(m_chnTx0i);
+        qDebug("DevicePlutoSDRBox::openTx: channel I: length: %u bits: %u shift: %u signed: %s be: %s with_scale: %s scale: %lf repeat: %u",
+                df->length,
+                df->bits,
+                df->shift,
+                df->is_signed ? "true" : "false",
+                df->is_be ? "true" : "false",
+                df->with_scale? "true" : "false",
+                df->scale,
+                df->repeat);
+    } else {
+        std::cerr << "DevicePlutoSDRBox::openTx: failed to open I channel" << std::endl;
+        return false;
+    }
+
+    if (!m_chnTx0q) {
+        m_chnTx0q = iio_device_find_channel(m_devTx, "voltage1", true);
+    }
+
+    if (m_chnTx0q) {
+        iio_channel_enable(m_chnTx0q);
+        const struct iio_data_format *df = iio_channel_get_data_format(m_chnTx0q);
+        qDebug("DevicePlutoSDRBox::openTx: channel Q: length: %u bits: %u shift: %u signed: %s be: %s with_scale: %s scale: %lf repeat: %u",
                 df->length,
                 df->bits,
                 df->shift,
@@ -261,7 +313,7 @@ bool DevicePlutoSDRBox::openTx()
                 df->repeat);
         return true;
     } else {
-        std::cerr << "DevicePlutoSDRBox::openTx: failed" << std::endl;
+        std::cerr << "DevicePlutoSDRBox::openTx: failed to open Q channel" << std::endl;
         return false;
     }
 }
@@ -273,7 +325,8 @@ void DevicePlutoSDRBox::closeRx()
 
 void DevicePlutoSDRBox::closeTx()
 {
-    if (m_chnTx0) { iio_channel_disable(m_chnTx0); }
+    if (m_chnTx0i) { iio_channel_disable(m_chnTx0i); }
+    if (m_chnTx0q) { iio_channel_disable(m_chnTx0q); }
 }
 
 struct iio_buffer *DevicePlutoSDRBox::createRxBuffer(unsigned int size, bool cyclic)
@@ -398,9 +451,19 @@ char* DevicePlutoSDRBox::txBufferEnd()
 char* DevicePlutoSDRBox::txBufferFirst()
 {
     if (m_txBuf) {
-        return (char *) iio_buffer_first(m_txBuf, m_chnTx0);
+        return (char *) iio_buffer_first(m_txBuf, m_chnTx0i);
     } else {
         return 0;
+    }
+}
+
+void DevicePlutoSDRBox::txChannelConvert(int16_t *dst, int16_t *src)
+{
+    if (m_chnTx0i) {
+        iio_channel_convert_inverse(m_chnTx0i, &dst[0], &src[0]);
+    }
+    if (m_chnTx0q) {
+        iio_channel_convert_inverse(m_chnTx0q, &dst[1], &src[1]);
     }
 }
 
@@ -572,7 +635,7 @@ void DevicePlutoSDRBox::formatFIRHeader(std::ostringstream& ostr,uint32_t intdec
 void DevicePlutoSDRBox::formatFIRCoefficients(std::ostringstream& ostr, uint32_t nbTaps, double normalizedBW)
 {
     double *fcoeffs = new double[nbTaps];
-    WFIR::BasicFIR(fcoeffs, nbTaps, WFIR::LPF, normalizedBW, 0.0, WFIR::wtBLACKMAN_HARRIS, 0.0);
+    WFIR::BasicFIR(fcoeffs, nbTaps, WFIR::LPF, normalizedBW, 0.0, normalizedBW < 0.2 ? WFIR::wtHAMMING : WFIR::wtBLACKMAN_HARRIS, 0.0);
 
     for (unsigned int i = 0; i < nbTaps; i++) {
         ostr << (int16_t) (fcoeffs[i] * 32768.0) << ", " <<  (int16_t) (fcoeffs[i] * 32768.0) << std::endl;
@@ -596,11 +659,50 @@ void DevicePlutoSDRBox::getXO()
     }
 }
 
-bool DevicePlutoSDRBox::getRSSI(std::string& rssiStr, unsigned int chan)
+bool DevicePlutoSDRBox::getRxGain(int& gaindB, unsigned int chan)
+{
+    chan = chan % 2;
+    char buff[30];
+    snprintf(buff, sizeof(buff), "in_voltage%d_hardwaregain", chan);
+    std::string gainStr;
+    get_param(DEVICE_PHY, buff, gainStr);
+
+    std::regex gain_regex("(.+)\\.(.+) dB");
+    std::smatch gain_match;
+    std::regex_search(gainStr, gain_match, gain_regex);
+
+    if (gain_match.size() == 3)
+    {
+        try
+        {
+            gaindB = boost::lexical_cast<int>(gain_match[1]);
+            return true;
+        }
+        catch (const boost::bad_lexical_cast &e)
+        {
+            qWarning("DevicePlutoSDRBox::getRxGain: bad conversion to numeric");
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+}
+
+bool DevicePlutoSDRBox::getRxRSSI(std::string& rssiStr, unsigned int chan)
 {
     chan = chan % 2;
     char buff[20];
     snprintf(buff, sizeof(buff), "in_voltage%d_rssi", chan);
+    return get_param(DEVICE_PHY, buff, rssiStr);
+}
+
+bool DevicePlutoSDRBox::getTxRSSI(std::string& rssiStr, unsigned int chan)
+{
+    chan = chan % 2;
+    char buff[20];
+    snprintf(buff, sizeof(buff), "out_voltage%d_rssi", chan);
     return get_param(DEVICE_PHY, buff, rssiStr);
 }
 

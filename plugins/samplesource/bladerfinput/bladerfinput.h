@@ -37,18 +37,21 @@ public:
 
 	public:
 		const BladeRFInputSettings& getSettings() const { return m_settings; }
+		bool getForce() const { return m_force; }
 
-		static MsgConfigureBladerf* create(const BladeRFInputSettings& settings)
+		static MsgConfigureBladerf* create(const BladeRFInputSettings& settings, bool force)
 		{
-			return new MsgConfigureBladerf(settings);
+			return new MsgConfigureBladerf(settings, force);
 		}
 
 	private:
 		BladeRFInputSettings m_settings;
+		bool m_force;
 
-		MsgConfigureBladerf(const BladeRFInputSettings& settings) :
+		MsgConfigureBladerf(const BladeRFInputSettings& settings, bool force) :
 			Message(),
-			m_settings(settings)
+			m_settings(settings),
+			m_force(force)
 		{ }
 	};
 
@@ -73,6 +76,7 @@ public:
 
 	BladerfInput(DeviceSourceAPI *deviceAPI);
 	virtual ~BladerfInput();
+	virtual void destroy();
 
 	virtual bool start();
 	virtual void stop();

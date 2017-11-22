@@ -13,6 +13,7 @@ set(atv_HEADERS
 	atvdemodgui.h
 	atvdemodplugin.h
 	atvscreen.h
+	atvscreeninterface.h
 	glshaderarray.h
 )
 
@@ -42,6 +43,7 @@ add_library(demodatv SHARED
 target_link_libraries(demodatv
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(demodatv Core Widgets)

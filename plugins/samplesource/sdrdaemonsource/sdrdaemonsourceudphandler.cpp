@@ -94,7 +94,7 @@ void SDRdaemonSourceUDPHandler::start()
 
 	// Need to notify the DSP engine to actually start
 	DSPSignalNotification *notif = new DSPSignalNotification(m_samplerate, m_centerFrequency * 1000); // Frequency in Hz for the DSP engine
-	m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+	m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
     m_elapsedTimer.start();
 }
 
@@ -173,12 +173,13 @@ void SDRdaemonSourceUDPHandler::processData()
     if (change)
     {
         DSPSignalNotification *notif = new DSPSignalNotification(m_samplerate, m_centerFrequency * 1000); // Frequency in Hz for the DSP engine
-        m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+        m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
         SDRdaemonSourceInput::MsgReportSDRdaemonSourceStreamData *report = SDRdaemonSourceInput::MsgReportSDRdaemonSourceStreamData::create(
             m_samplerate,
             m_centerFrequency * 1000, // Frequency in Hz for the GUI
             m_tv_sec,
             m_tv_usec);
+
         m_outputMessageQueueToGUI->push(report);
     }
 }
@@ -258,6 +259,7 @@ void SDRdaemonSourceUDPHandler::tick()
             m_sdrDaemonBuffer.getAvgNbRecovery(),
             nbOriginalBlocks,
             nbFECblocks);
+
             m_outputMessageQueueToGUI->push(report);
 	}
 }

@@ -17,10 +17,11 @@
 #ifndef INCLUDE_CHANALYZERNG_H
 #define INCLUDE_CHANALYZERNG_H
 
-#include <dsp/basebandsamplesink.h>
 #include <QMutex>
 #include <vector>
 
+#include "dsp/basebandsamplesink.h"
+#include "channel/channelsinkapi.h"
 #include "dsp/interpolator.h"
 #include "dsp/ncof.h"
 #include "dsp/fftfilt.h"
@@ -29,10 +30,102 @@
 
 #define ssbFftLen 1024
 
-class ChannelAnalyzerNG : public BasebandSampleSink {
+class DeviceSourceAPI;
+class ThreadedBasebandSampleSink;
+class DownChannelizer;
+
+class ChannelAnalyzerNG : public BasebandSampleSink, public ChannelSinkAPI {
 public:
-    ChannelAnalyzerNG(BasebandSampleSink* m_sampleSink);
+    class MsgConfigureChannelAnalyzer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int  getChannelSampleRate() const { return m_channelSampleRate; }
+        Real getBandwidth() const { return m_Bandwidth; }
+        Real getLoCutoff() const { return m_LowCutoff; }
+        int  getSpanLog2() const { return m_spanLog2; }
+        bool getSSB() const { return m_ssb; }
+
+        static MsgConfigureChannelAnalyzer* create(
+                int channelSampleRate,
+                Real Bandwidth,
+                Real LowCutoff,
+                int spanLog2,
+                bool ssb)
+        {
+            return new MsgConfigureChannelAnalyzer(
+                    channelSampleRate,
+                    Bandwidth,
+                    LowCutoff,
+                    spanLog2,
+                    ssb);
+        }
+
+    private:
+        int  m_channelSampleRate;
+        Real m_Bandwidth;
+        Real m_LowCutoff;
+        int  m_spanLog2;
+        bool m_ssb;
+
+        MsgConfigureChannelAnalyzer(
+                int channelSampleRate,
+                Real Bandwidth,
+                Real LowCutoff,
+                int spanLog2,
+                bool ssb) :
+            Message(),
+            m_channelSampleRate(channelSampleRate),
+            m_Bandwidth(Bandwidth),
+            m_LowCutoff(LowCutoff),
+            m_spanLog2(spanLog2),
+            m_ssb(ssb)
+        { }
+    };
+
+    class MsgConfigureChannelizer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int getSampleRate() const { return m_sampleRate; }
+        int getCenterFrequency() const { return m_centerFrequency; }
+
+        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
+        {
+            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
+        }
+
+    private:
+        int  m_sampleRate;
+        int  m_centerFrequency;
+
+        MsgConfigureChannelizer(int sampleRate, int centerFrequency) :
+            Message(),
+            m_sampleRate(sampleRate),
+            m_centerFrequency(centerFrequency)
+        { }
+    };
+
+    class MsgReportChannelSampleRateChanged : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+
+        static MsgReportChannelSampleRateChanged* create()
+        {
+            return new MsgReportChannelSampleRateChanged();
+        }
+
+    private:
+
+        MsgReportChannelSampleRateChanged() :
+            Message()
+        { }
+    };
+
+    ChannelAnalyzerNG(DeviceSourceAPI *deviceAPI);
 	virtual ~ChannelAnalyzerNG();
+	void setSampleSink(BasebandSampleSink* sampleSink) { m_sampleSink = sampleSink; }
 
 	void configure(MessageQueue* messageQueue,
 			int channelSampleRate,
@@ -41,6 +134,7 @@ public:
 			int spanLog2,
 			bool ssb);
 
+	DownChannelizer *getChannelizer() { return m_channelizer; }
 	int getInputSampleRate() const { return m_running.m_inputSampleRate; }
     int getChannelSampleRate() const { return m_running.m_channelSampleRate; }
 	double getMagSq() const { return m_magsq; }
@@ -50,48 +144,13 @@ public:
 	virtual void stop();
 	virtual bool handleMessage(const Message& cmd);
 
+	virtual int getDeltaFrequency() const { return m_running.m_frequency; }
+	virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual void getTitle(QString& title) { title = objectName(); }
+
+    static const QString m_channelID;
+
 private:
-	class MsgConfigureChannelAnalyzer : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		int  getChannelSampleRate() const { return m_channelSampleRate; }
-		Real getBandwidth() const { return m_Bandwidth; }
-		Real getLoCutoff() const { return m_LowCutoff; }
-		int  getSpanLog2() const { return m_spanLog2; }
-		bool getSSB() const { return m_ssb; }
-
-		static MsgConfigureChannelAnalyzer* create(
-				int channelSampleRate,
-				Real Bandwidth,
-				Real LowCutoff,
-				int spanLog2,
-				bool ssb)
-		{
-			return new MsgConfigureChannelAnalyzer(channelSampleRate, Bandwidth, LowCutoff, spanLog2, ssb);
-		}
-
-	private:
-		int  m_channelSampleRate;
-		Real m_Bandwidth;
-		Real m_LowCutoff;
-		int  m_spanLog2;
-		bool m_ssb;
-
-		MsgConfigureChannelAnalyzer(
-				int channelSampleRate,
-				Real Bandwidth,
-				Real LowCutoff,
-				int spanLog2,
-				bool ssb) :
-			Message(),
-			m_channelSampleRate(channelSampleRate),
-			m_Bandwidth(Bandwidth),
-			m_LowCutoff(LowCutoff),
-			m_spanLog2(spanLog2),
-			m_ssb(ssb)
-		{ }
-	};
 
 	struct Config
 	{
@@ -116,6 +175,10 @@ private:
 
 	Config m_config;
 	Config m_running;
+
+	DeviceSourceAPI *m_deviceAPI;
+    ThreadedBasebandSampleSink* m_threadedChannelizer;
+    DownChannelizer* m_channelizer;
 
 	int m_undersampleCount;
 	fftfilt::cmplx m_sum;

@@ -15,6 +15,7 @@ DEFINES += USE_SSE2=1
 QMAKE_CXXFLAGS += -msse2
 DEFINES += USE_SSE4_1=1
 QMAKE_CXXFLAGS += -msse4.1
+QMAKE_CXXFLAGS += -std=c++11
 
 CONFIG(MINGW32):LIBDSDCCSRC = "D:\softs\dsdcc"
 CONFIG(MINGW64):LIBDSDCCSRC = "D:\softs\dsdcc"
@@ -30,6 +31,7 @@ CONFIG(macx):INCLUDEPATH += "../../../../../boost_1_64_0"
 
 INCLUDEPATH += $$PWD
 INCLUDEPATH += ../../../sdrbase
+INCLUDEPATH += ../../../sdrgui
 INCLUDEPATH += $$LIBDSDCCSRC
 INCLUDEPATH += $$LIBMBELIBSRC
 
@@ -39,16 +41,21 @@ CONFIG(Debug):build_subdir = debug
 SOURCES = dsddecoder.cpp\
 dsddemod.cpp\
 dsddemodgui.cpp\
-dsddemodplugin.cpp
+dsddemodplugin.cpp\
+dsddemodbaudrates.cpp\
+dsddemodsettings.cpp
 
 HEADERS = dsddecoder.h\
 dsddemod.h\
 dsddemodgui.h\
-dsddemodplugin.h
+dsddemodplugin.h\
+dsddemodbaudrates.h\
+dsddemodsettings.h
 
 FORMS = dsddemodgui.ui
 
 LIBS += -L../../../sdrbase/$${build_subdir} -lsdrbase
+LIBS += -L../../../sdrgui/$${build_subdir} -lsdrgui
 LIBS += -L../../../dsdcc/$${build_subdir} -ldsdcc
 
-RESOURCES = ../../../sdrbase/resources/res.qrc
+RESOURCES = ../../../sdrgui/resources/res.qrc

@@ -17,26 +17,28 @@
 #ifndef INCLUDE_BLADERFOUTPUTGUI_H
 #define INCLUDE_BLADERFOUTPUTGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QWidget>
 
+#include "util/messagequeue.h"
+
 #include "bladerfoutput.h"
 
-class DeviceSinkAPI;
 class DeviceSampleSink;
+class DeviceUISet;
 
 namespace Ui {
 	class BladerfOutputGui;
 }
 
-class BladerfOutputGui : public QWidget, public PluginInstanceUI {
+class BladerfOutputGui : public QWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
-	explicit BladerfOutputGui(DeviceSinkAPI *deviceAPI, QWidget* parent = NULL);
+	explicit BladerfOutputGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
 	virtual ~BladerfOutputGui();
-	void destroy();
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -46,12 +48,14 @@ public:
 	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
+	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::BladerfOutputGui* ui;
 
-	DeviceSinkAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
+	bool m_forceSettings;
 	BladeRFOutputSettings m_settings;
 	QTimer m_updateTimer;
 	QTimer m_statusTimer;
@@ -59,6 +63,7 @@ private:
     int m_sampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
 	int m_lastEngineState;
+	MessageQueue m_inputMessageQueue;
 
 	void displaySettings();
 	void sendSettings();
@@ -66,7 +71,7 @@ private:
 	void updateSampleRateAndFrequency();
 
 private slots:
-    void handleDSPMessages();
+    void handleInputMessages();
 	void on_centerFrequency_changed(quint64 value);
     void on_sampleRate_changed(quint64 value);
 	void on_bandwidth_currentIndexChanged(int index);

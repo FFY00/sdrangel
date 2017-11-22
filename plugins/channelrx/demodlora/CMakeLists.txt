@@ -3,12 +3,14 @@ project(lora)
 set(lora_SOURCES
 	lorademod.cpp
 	lorademodgui.cpp
+	lorademodsettings.cpp
 	loraplugin.cpp
 )
 
 set(lora_HEADERS
 	lorademod.h
 	lorademodgui.h
+	lorademodsettings.h
 	loraplugin.h
 )
 
@@ -38,6 +40,7 @@ add_library(demodlora SHARED
 target_link_libraries(demodlora
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(demodlora Core Widgets)

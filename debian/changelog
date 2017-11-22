@@ -1,3 +1,100 @@
+sdrangel (3.8.4-1) unstable; urgency=medium
+
+  * Optimize channel marker signal handling. Applied to all mods and demods
+  * Fixed value dials direct digits setting
+  * Implemented minimal version of web API sever
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Sat, 18 Nov 2017 12:14:18 +0100
+
+sdrangel (3.8.3-1) unstable; urgency=medium
+
+  * ChannelAnalyzerNG: fixed GUI displays when channel sample rate changes
+  * SSB demod: fixed low cutoff channel marker display
+  * LimeSDR: increased start/stop stream wait time to 50ms
+  * New logging system with optional copy to files
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Sun, 12 Nov 2017 18:14:18 +0100
+
+sdrangel (3.8.2-1) unstable; urgency=medium
+
+  * WFM Demod: fixed segfault due to sequence of actions in demod constructor
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Wed, 08 Nov 2017 18:14:18 +0100
+
+sdrangel (3.8.1-1) unstable; urgency=medium
+
+  * SSB Mod: refactored bandwidths settings and fixed segfault
+  * LimeSDR: implemented external clock reference input option
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Sun, 05 Nov 2017 18:14:18 +0100
+
+sdrangel (3.8.0-1) unstable; urgency=medium
+
+  * Redesigned the device handling to accomodate multi channel devices like LimeSDR
+  * Refactoring: Separate DeviceAPI from the GUI
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Thu, 02 Nov 2017 18:14:18 +0100
+
+sdrangel (3.7.8-1) unstable; urgency=medium
+
+  * PlutoSDR: restored and fixed Tx support
+  * LimeSDR: reworked the start/stop stream so it does not need the workaround delay
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Sun, 28 Oct 2017 18:14:18 +0100
+
+sdrangel (3.7.7-1) unstable; urgency=medium
+
+  * PlutoSDR: removed Tx support
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Sat, 27 Oct 2017 23:14:18 +0200
+
+sdrangel (3.7.6-1) unstable; urgency=medium
+
+  * LimeSDR: attempt to fix lockup conditions when Rx and Tx run concurrently
+  * LimeSDR: handle hardware decimation and sample rate Rx/Tx relation correctly
+  * Create sdrbase library own CMakeLists.txt
+  * Created sdrgui library and split off GUI stuff from sdrbase
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Sun, 21 Oct 2017 23:14:18 +0200
+
+sdrangel (3.7.5-1) unstable; urgency=medium
+
+  * CW keyer: make ramp as 20% of dot length to smoothen even more
+  * Fixed BFM demod frequency shift
+  * GUI and demod separation step 1 full
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Sun, 14 Oct 2017 23:14:18 +0200
+
+sdrangel (3.7.4-1) unstable; urgency=medium
+
+  * GUI and demod separation step 1 full
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Sun, 08 Oct 2017 23:14:18 +0200
+
+sdrangel (3.7.3-1) unstable; urgency=medium
+
+  * For Airspy, Funcube Pro and Pro+, PlutoSDR Rx and Tx, RTLSDR:
+  * Button and dialog to set frequency translation for transverter operation
+  * GUI and demod separation step 1 partial
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Wed, 04 Oct 2017 23:14:18 +0200
+
+sdrangel (3.7.2-1) unstable; urgency=medium
+
+  * PlutoSDR: Remove from device enumeration if device is not accessible
+  * RTLSDR: Fixed gains retrieval in the GUI
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Sat, 23 Sep 2017 05:14:18 +0200
+
+sdrangel (3.7.1-1) unstable; urgency=medium
+
+  * PlutoSDR: Tx support
+  * LimeSDR: use version 17.09 of LimeSuite providing bug fixes
+  * GUI segregation: remove device source or sink lifecycle from the GUI
+  * GUI segregation: handle GUI and device buddy updates separately
+
+ -- Edouard Griffiths, F4EXB <f4exb06@gmail.com>  Thu, 21 Sep 2017 21:14:18 +0200
+
 sdrangel (3.7.0-1) unstable; urgency=medium
 
   * PlutoSDR: Rx support 

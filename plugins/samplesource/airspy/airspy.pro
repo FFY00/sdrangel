@@ -15,6 +15,7 @@ CONFIG(MINGW32):LIBAIRSPYSRC = "D:\softs\libairspy"
 CONFIG(MINGW64):LIBAIRSPYSRC = "D:\softs\libairspy"
 INCLUDEPATH += $$PWD
 INCLUDEPATH += ../../../sdrbase
+INCLUDEPATH += ../../../sdrgui
 INCLUDEPATH += $$LIBAIRSPYSRC
 
 DEFINES += LIBAIRSPY_DYN_RATES
@@ -22,6 +23,7 @@ DEFINES += USE_SSE2=1
 QMAKE_CXXFLAGS += -msse2
 DEFINES += USE_SSE4_1=1
 QMAKE_CXXFLAGS += -msse4.1
+QMAKE_CXXFLAGS += -std=c++11
 
 CONFIG(Release):build_subdir = release
 CONFIG(Debug):build_subdir = debug
@@ -41,6 +43,7 @@ HEADERS += airspygui.h\
 FORMS += airspygui.ui
 
 LIBS += -L../../../sdrbase/$${build_subdir} -lsdrbase
+LIBS += -L../../../sdrgui/$${build_subdir} -lsdrgui
 LIBS += -L../../../libairspy/$${build_subdir} -llibairspy
 
-RESOURCES = ../../../sdrbase/resources/res.qrc
+RESOURCES = ../../../sdrgui/resources/res.qrc

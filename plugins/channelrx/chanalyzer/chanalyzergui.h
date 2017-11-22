@@ -17,16 +17,15 @@
 #ifndef INCLUDE_CHANNELANALYZERGUI_H
 #define INCLUDE_CHANNELANALYZERGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include "gui/rollupwidget.h"
 #include "dsp/channelmarker.h"
 #include "dsp/movingaverage.h"
+#include "util/messagequeue.h"
 
 class PluginAPI;
-class DeviceSourceAPI;
-
-class ThreadedBasebandSampleSink;
-class DownChannelizer;
+class DeviceUISet;
+class BasebandSampleSink;
 class ChannelAnalyzer;
 class SpectrumScopeComboVis;
 class SpectrumVis;
@@ -36,12 +35,12 @@ namespace Ui {
 	class ChannelAnalyzerGUI;
 }
 
-class ChannelAnalyzerGUI : public RollupWidget, public PluginInstanceUI {
+class ChannelAnalyzerGUI : public RollupWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
-	static ChannelAnalyzerGUI* create(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI);
-	void destroy();
+	static ChannelAnalyzerGUI* create(PluginAPI* pluginAPI, DeviceUISet *deviceUIset, BasebandSampleSink *rxChannel);
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -51,43 +50,30 @@ public:
 	void resetToDefaults();
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
-
+	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 
-	static const QString m_channelID;
-
-private slots:
-	void viewChanged();
-	void channelSampleRateChanged();
-	void on_deltaFrequency_changed(quint64 value);
-	void on_deltaMinus_toggled(bool minus);
-	void on_BW_valueChanged(int value);
-	void on_lowCut_valueChanged(int value);
-	void on_spanLog2_valueChanged(int value);
-	void on_ssb_toggled(bool checked);
-	void onWidgetRolled(QWidget* widget, bool rollDown);
-	void onMenuDoubleClicked();
-	void tick();
+public slots:
+	void channelMarkerChangedByCursor();
+	void channelMarkerHighlightedByCursor();
 
 private:
 	Ui::ChannelAnalyzerGUI* ui;
 	PluginAPI* m_pluginAPI;
-	DeviceSourceAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
 	ChannelMarker m_channelMarker;
-	bool m_basicSettingsShown;
 	bool m_doApplySettings;
 	int m_rate;
 	int m_spanLog2;
 	MovingAverage<Real> m_channelPowerDbAvg;
 
-	ThreadedBasebandSampleSink* m_threadedChannelizer;
-	DownChannelizer* m_channelizer;
 	ChannelAnalyzer* m_channelAnalyzer;
 	SpectrumScopeComboVis* m_spectrumScopeComboVis;
 	SpectrumVis* m_spectrumVis;
 	ScopeVis* m_scopeVis;
+	MessageQueue m_inputMessageQueue;
 
-	explicit ChannelAnalyzerGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidget* parent = NULL);
+	explicit ChannelAnalyzerGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel, QWidget* parent = 0);
 	virtual ~ChannelAnalyzerGUI();
 
 	int  getEffectiveLowCutoff(int lowCutoff);
@@ -98,6 +84,17 @@ private:
 
 	void leaveEvent(QEvent*);
 	void enterEvent(QEvent*);
+
+private slots:
+	void on_deltaFrequency_changed(quint64 value);
+	void on_deltaMinus_toggled(bool minus);
+	void on_BW_valueChanged(int value);
+	void on_lowCut_valueChanged(int value);
+	void on_spanLog2_valueChanged(int value);
+	void on_ssb_toggled(bool checked);
+	void onWidgetRolled(QWidget* widget, bool rollDown);
+    void handleInputMessages();
+	void tick();
 };
 
 #endif // INCLUDE_CHANNELANALYZERGUI_H

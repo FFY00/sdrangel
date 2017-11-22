@@ -14,30 +14,27 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include "device/devicesourceapi.h"
 #include "device/devicesinkapi.h"
-#include "plugin/pluginapi.h"
+#include "dsp/devicesamplesource.h"
 #include "plugin/plugininterface.h"
-#include "gui/glspectrum.h"
-#include "gui/channelwindow.h"
-#include "mainwindow.h"
 #include "settings/preset.h"
+#include "dsp/dspengine.h"
+#include "channel/channelsinkapi.h"
 
-DeviceSourceAPI::DeviceSourceAPI(MainWindow *mainWindow,
-        int deviceTabIndex,
-        DSPDeviceSourceEngine *deviceSourceEngine,
-        GLSpectrum *glSpectrum,
-        ChannelWindow *channelWindow) :
-    m_mainWindow(mainWindow),
+DeviceSourceAPI::DeviceSourceAPI(int deviceTabIndex,
+        DSPDeviceSourceEngine *deviceSourceEngine) :
     m_deviceTabIndex(deviceTabIndex),
     m_deviceSourceEngine(deviceSourceEngine),
-    m_spectrum(glSpectrum),
-    m_channelWindow(channelWindow),
     m_sampleSourceSequence(0),
+    m_nbItems(1),
+    m_itemIndex(0),
+    m_pluginInterface(0),
     m_sampleSourcePluginInstanceUI(0),
     m_buddySharedPtr(0),
-    m_isBuddyLeader(false)
+    m_isBuddyLeader(false),
+    m_masterTimer(DSPEngine::instance()->getMasterTimer())
 {
 }
 
@@ -65,12 +62,43 @@ void DeviceSourceAPI::removeThreadedSink(ThreadedBasebandSampleSink* sink)
     m_deviceSourceEngine->removeThreadedSink(sink);
 }
 
-void DeviceSourceAPI::setSource(DeviceSampleSource* source)
+void DeviceSourceAPI::addChannelAPI(ChannelSinkAPI* channelAPI)
+{
+    m_channelAPIs.append(channelAPI);
+    renumerateChannels();
+}
+
+void DeviceSourceAPI::removeChannelAPI(ChannelSinkAPI* channelAPI)
+{
+    if (m_channelAPIs.removeOne(channelAPI)) {
+        renumerateChannels();
+    }
+
+    channelAPI->setIndexInDeviceSet(-1);
+}
+
+ChannelSinkAPI *DeviceSourceAPI::getChanelAPIAt(int index)
+{
+    if (index < m_channelAPIs.size()) {
+        return m_channelAPIs.at(index);
+    } else {
+        return 0;
+    }
+}
+
+void DeviceSourceAPI::renumerateChannels()
+{
+    for (int i = 0; i < m_channelAPIs.size(); ++i) {
+        m_channelAPIs.at(i)->setIndexInDeviceSet(i);
+    }
+}
+
+void DeviceSourceAPI::setSampleSource(DeviceSampleSource* source)
 {
     m_deviceSourceEngine->setSource(source);
 }
 
-DeviceSampleSource *DeviceSourceAPI::getSource()
+DeviceSampleSource *DeviceSourceAPI::getSampleSource()
 {
     return m_deviceSourceEngine->getSource();
 }
@@ -105,44 +133,25 @@ uint DeviceSourceAPI::getDeviceUID() const
     return m_deviceSourceEngine->getUID();
 }
 
-MessageQueue *DeviceSourceAPI::getDeviceInputMessageQueue()
+MessageQueue *DeviceSourceAPI::getDeviceEngineInputMessageQueue()
 {
     return m_deviceSourceEngine->getInputMessageQueue();
 }
 
-MessageQueue *DeviceSourceAPI::getDeviceOutputMessageQueue()
+MessageQueue *DeviceSourceAPI::getSampleSourceInputMessageQueue()
 {
-    return m_deviceSourceEngine->getOutputMessageQueue();
+    return getSampleSource()->getInputMessageQueue();
 }
+
+MessageQueue *DeviceSourceAPI::getSampleSourceGUIMessageQueue()
+{
+    return getSampleSource()->getMessageQueueToGUI();
+}
+
 
 void DeviceSourceAPI::configureCorrections(bool dcOffsetCorrection, bool iqImbalanceCorrection)
 {
     m_deviceSourceEngine->configureCorrections(dcOffsetCorrection, iqImbalanceCorrection);
-}
-
-GLSpectrum *DeviceSourceAPI::getSpectrum()
-{
-    return m_spectrum;
-}
-
-void DeviceSourceAPI::addChannelMarker(ChannelMarker* channelMarker)
-{
-    m_spectrum->addChannelMarker(channelMarker);
-}
-
-ChannelWindow *DeviceSourceAPI::getChannelWindow()
-{
-    return m_channelWindow;
-}
-
-void DeviceSourceAPI::addRollupWidget(QWidget *widget)
-{
-    m_channelWindow->addRollupWidget(widget);
-}
-
-void DeviceSourceAPI::setInputGUI(QWidget* inputGUI, const QString& sourceDisplayName)
-{
-    m_mainWindow->setDeviceGUI(m_deviceTabIndex, inputGUI, sourceDisplayName);
 }
 
 void DeviceSourceAPI::setHardwareId(const QString& id)
@@ -155,9 +164,19 @@ void DeviceSourceAPI::setSampleSourceId(const QString& id)
     m_sampleSourceId = id;
 }
 
+void DeviceSourceAPI::resetSampleSourceId()
+{
+    m_sampleSourceId.clear();
+}
+
 void DeviceSourceAPI::setSampleSourceSerial(const QString& serial)
 {
     m_sampleSourceSerial = serial;
+}
+
+void DeviceSourceAPI::setSampleSourceDisplayName(const QString& name)
+{
+    m_sampleSourceDisplayName = name;
 }
 
 void DeviceSourceAPI::setSampleSourceSequence(int sequence)
@@ -166,67 +185,55 @@ void DeviceSourceAPI::setSampleSourceSequence(int sequence)
     m_deviceSourceEngine->setSourceSequence(sequence);
 }
 
-void DeviceSourceAPI::setSampleSourcePluginInstanceUI(PluginInstanceUI *gui)
+void DeviceSourceAPI::setNbItems(uint32_t nbItems)
 {
-    if (m_sampleSourcePluginInstanceUI != 0)
-    {
-        m_sampleSourcePluginInstanceUI->destroy();
-        m_sampleSourceId.clear();
-    }
+    m_nbItems = nbItems;
+}
 
+void DeviceSourceAPI::setItemIndex(uint32_t index)
+{
+    m_itemIndex = index;
+}
+
+void DeviceSourceAPI::setSampleSourcePluginInterface(PluginInterface *iface)
+{
+    m_pluginInterface = iface;
+}
+
+void DeviceSourceAPI::setSampleSourcePluginInstanceGUI(PluginInstanceGUI *gui)
+{
     m_sampleSourcePluginInstanceUI = gui;
 }
 
-void DeviceSourceAPI::registerChannelInstance(const QString& channelName, PluginInstanceUI* pluginGUI)
+void DeviceSourceAPI::getDeviceEngineStateStr(QString& state)
 {
-    m_channelInstanceRegistrations.append(ChannelInstanceRegistration(channelName, pluginGUI));
-    renameChannelInstances();
-}
-
-void DeviceSourceAPI::removeChannelInstance(PluginInstanceUI* pluginGUI)
-{
-    for(ChannelInstanceRegistrations::iterator it = m_channelInstanceRegistrations.begin(); it != m_channelInstanceRegistrations.end(); ++it)
+    if (m_deviceSourceEngine)
     {
-        if(it->m_gui == pluginGUI)
+        switch(m_deviceSourceEngine->state())
         {
-            m_channelInstanceRegistrations.erase(it);
+        case DSPDeviceSourceEngine::StNotStarted:
+            state = "notStarted";
+            break;
+        case DSPDeviceSourceEngine::StIdle:
+            state = "idle";
+            break;
+        case DSPDeviceSourceEngine::StReady:
+            state = "ready";
+            break;
+        case DSPDeviceSourceEngine::StRunning:
+            state = "running";
+            break;
+        case DSPDeviceSourceEngine::StError:
+            state = "error";
+            break;
+        default:
+            state = "notStarted";
             break;
         }
     }
-
-    renameChannelInstances();
-}
-
-void DeviceSourceAPI::renameChannelInstances()
-{
-    for(int i = 0; i < m_channelInstanceRegistrations.count(); i++)
+    else
     {
-        m_channelInstanceRegistrations[i].m_gui->setName(QString("%1:%2").arg(m_channelInstanceRegistrations[i].m_channelName).arg(i));
-    }
-}
-
-void DeviceSourceAPI::freeAll()
-{
-//    while(!m_channelInstanceRegistrations.isEmpty())
-//    {
-//        ChannelInstanceRegistration reg(m_channelInstanceRegistrations.takeLast());
-//        reg.m_gui->destroy();
-//    }
-
-    for(int i = 0; i < m_channelInstanceRegistrations.count(); i++)
-    {
-        qDebug("DeviceSourceAPI::freeAll: destroying channel [%s]", qPrintable(m_channelInstanceRegistrations[i].m_channelName));
-        m_channelInstanceRegistrations[i].m_gui->destroy();
-    }
-
-
-    if(m_sampleSourcePluginInstanceUI != 0)
-    {
-        qDebug("DeviceSourceAPI::freeAll: destroying m_sampleSourcePluginGUI");
-        m_deviceSourceEngine->setSource(0);
-        m_sampleSourcePluginInstanceUI->destroy();
-        m_sampleSourcePluginInstanceUI = 0;
-        m_sampleSourceId.clear();
+        state = "notStarted";
     }
 }
 
@@ -257,7 +264,7 @@ void DeviceSourceAPI::loadSourceSettings(const Preset* preset)
     }
     else
     {
-        qDebug("DeviceSourceAPI::loadSourceSettings: Loading preset [%s | %s] is not a source preset\n", qPrintable(preset->getGroup()), qPrintable(preset->getDescription()));
+        qDebug("DeviceSourceAPI::loadSourceSettings: Loading preset [%s | %s] is not a source preset", qPrintable(preset->getGroup()), qPrintable(preset->getDescription()));
     }
 }
 
@@ -282,120 +289,8 @@ void DeviceSourceAPI::saveSourceSettings(Preset* preset)
     }
 }
 
-void DeviceSourceAPI::loadChannelSettings(const Preset *preset, PluginAPI *pluginAPI)
-{
-    if (preset->isSourcePreset())
-    {
-        qDebug("DeviceSourceAPI::loadChannelSettings: Loading preset [%s | %s]", qPrintable(preset->getGroup()), qPrintable(preset->getDescription()));
-
-        // Available channel plugins
-        PluginAPI::ChannelRegistrations *channelRegistrations = pluginAPI->getRxChannelRegistrations();
-
-        // copy currently open channels and clear list
-        ChannelInstanceRegistrations openChannels = m_channelInstanceRegistrations;
-        m_channelInstanceRegistrations.clear();
-
-        qDebug("DeviceSourceAPI::loadChannelSettings: %d channel(s) in preset", preset->getChannelCount());
-
-        for(int i = 0; i < preset->getChannelCount(); i++)
-        {
-            const Preset::ChannelConfig& channelConfig = preset->getChannelConfig(i);
-            ChannelInstanceRegistration reg;
-
-            // if we have one instance available already, use it
-
-            for(int i = 0; i < openChannels.count(); i++)
-            {
-                qDebug("DeviceSourceAPI::loadChannelSettings: channels compare [%s] vs [%s]", qPrintable(openChannels[i].m_channelName), qPrintable(channelConfig.m_channel));
-
-                if(openChannels[i].m_channelName == channelConfig.m_channel)
-                {
-                    qDebug("DeviceSourceAPI::loadChannelSettings: channel [%s] found", qPrintable(openChannels[i].m_channelName));
-                    reg = openChannels.takeAt(i);
-                    m_channelInstanceRegistrations.append(reg);
-                    break;
-                }
-            }
-
-            // if we haven't one already, create one
-
-            if(reg.m_gui == NULL)
-            {
-                for(int i = 0; i < channelRegistrations->count(); i++)
-                {
-                    if((*channelRegistrations)[i].m_channelName == channelConfig.m_channel)
-                    {
-                        qDebug("DeviceSourceAPI::loadChannelSettings: creating new channel [%s]", qPrintable(channelConfig.m_channel));
-                        reg = ChannelInstanceRegistration(channelConfig.m_channel, (*channelRegistrations)[i].m_plugin->createRxChannel(channelConfig.m_channel, this));
-                        break;
-                    }
-                }
-            }
-
-            if(reg.m_gui != NULL)
-            {
-                qDebug("DeviceSourceAPI::loadChannelSettings: deserializing channel [%s]", qPrintable(channelConfig.m_channel));
-                reg.m_gui->deserialize(channelConfig.m_config);
-            }
-        }
-
-        // everything, that is still "available" is not needed anymore
-        for(int i = 0; i < openChannels.count(); i++)
-        {
-            qDebug("DeviceSourceAPI::loadChannelSettings: destroying spare channel [%s]", qPrintable(openChannels[i].m_channelName));
-            openChannels[i].m_gui->destroy();
-        }
-
-        renameChannelInstances();
-    }
-    else
-    {
-        qDebug("DeviceSourceAPI::loadChannelSettings: Loading preset [%s | %s] not a source preset", qPrintable(preset->getGroup()), qPrintable(preset->getDescription()));
-    }
-}
-
-void DeviceSourceAPI::saveChannelSettings(Preset *preset)
-{
-    if (preset->isSourcePreset())
-    {
-        qSort(m_channelInstanceRegistrations.begin(), m_channelInstanceRegistrations.end()); // sort by increasing delta frequency and type
-
-        for(int i = 0; i < m_channelInstanceRegistrations.count(); i++)
-        {
-            qDebug("DeviceSourceAPI::saveChannelSettings: channel [%s] saved", qPrintable(m_channelInstanceRegistrations[i].m_channelName));
-            preset->addChannel(m_channelInstanceRegistrations[i].m_channelName, m_channelInstanceRegistrations[i].m_gui->serialize());
-        }
-    }
-    else
-    {
-        qDebug("DeviceSourceAPI::saveChannelSettings: not a source preset");
-    }
-}
-
-// sort by increasing delta frequency and type (i.e. name)
-bool DeviceSourceAPI::ChannelInstanceRegistration::operator<(const ChannelInstanceRegistration& other) const
-{
-    if (m_gui && other.m_gui)
-    {
-        if (m_gui->getCenterFrequency() == other.m_gui->getCenterFrequency())
-        {
-            return m_gui->getName() < other.m_gui->getName();
-        }
-        else
-        {
-            return m_gui->getCenterFrequency() < other.m_gui->getCenterFrequency();
-        }
-    }
-    else
-    {
-        return false;
-    }
-}
-
 void DeviceSourceAPI::addSourceBuddy(DeviceSourceAPI* buddy)
 {
-    std::vector<DeviceSourceAPI*>::iterator it = m_sourceBuddies.begin();
-
     m_sourceBuddies.push_back(buddy);
     buddy->m_sourceBuddies.push_back(this);
     qDebug("DeviceSourceAPI::addSourceBuddy: added buddy %s(%s) [%lx] <-> [%lx]",
@@ -407,8 +302,6 @@ void DeviceSourceAPI::addSourceBuddy(DeviceSourceAPI* buddy)
 
 void DeviceSourceAPI::addSinkBuddy(DeviceSinkAPI* buddy)
 {
-    std::vector<DeviceSinkAPI*>::iterator it = m_sinkBuddies.begin();
-
     m_sinkBuddies.push_back(buddy);
     buddy->m_sourceBuddies.push_back(this);
     qDebug("DeviceSourceAPI::addSinkBuddy: added buddy %s(%s) [%lx] <-> [%lx]",

@@ -1,13 +1,13 @@
-#include "../../channelrx/demodnfm/nfmplugin.h"
-
 #include <QtPlugin>
 #include "plugin/pluginapi.h"
 
-#include "../../channelrx/demodnfm/nfmdemodgui.h"
+#include "nfmplugin.h"
+#include "nfmdemodgui.h"
+#include "nfmdemod.h"
 
 const PluginDescriptor NFMPlugin::m_pluginDescriptor = {
 	QString("NFM Demodulator"),
-	QString("3.6.1"),
+	QString("3.8.4"),
 	QString("(c) Edouard Griffiths, F4EXB"),
 	QString("https://github.com/f4exb/sdrangel"),
 	true,
@@ -30,20 +30,26 @@ void NFMPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI = pluginAPI;
 
 	// register NFM demodulator
-	m_pluginAPI->registerRxChannel(NFMDemodGUI::m_channelID, this);
+	m_pluginAPI->registerRxChannel(NFMDemod::m_channelID, this);
 }
 
-PluginInstanceUI* NFMPlugin::createRxChannel(const QString& channelName, DeviceSourceAPI *deviceAPI)
+PluginInstanceGUI* NFMPlugin::createRxChannelGUI(const QString& channelName, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
 {
-	if(channelName == NFMDemodGUI::m_channelID) {
-		NFMDemodGUI* gui = NFMDemodGUI::create(m_pluginAPI, deviceAPI);
+	if(channelName == NFMDemod::m_channelID) {
+		NFMDemodGUI* gui = NFMDemodGUI::create(m_pluginAPI, deviceUISet, rxChannel);
 		return gui;
 	} else {
-		return NULL;
+		return 0;
 	}
 }
 
-void NFMPlugin::createInstanceNFM(DeviceSourceAPI *deviceAPI)
+BasebandSampleSink* NFMPlugin::createRxChannel(const QString& channelName, DeviceSourceAPI *deviceAPI)
 {
-	NFMDemodGUI::create(m_pluginAPI, deviceAPI);
+    if(channelName == NFMDemod::m_channelID)
+    {
+        NFMDemod* sink = new NFMDemod(deviceAPI);
+        return sink;
+    } else {
+        return 0;
+    }
 }

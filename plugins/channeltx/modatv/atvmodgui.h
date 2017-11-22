@@ -17,30 +17,30 @@
 #ifndef PLUGINS_CHANNELTX_MODTV_ATVMODGUI_H_
 #define PLUGINS_CHANNELTX_MODTV_ATVMODGUI_H_
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include "gui/rollupwidget.h"
 #include "dsp/channelmarker.h"
 #include "dsp/movingaverage.h"
+#include "util/messagequeue.h"
+
 #include "atvmod.h"
+#include "atvmodsettings.h"
 
 class PluginAPI;
-class DeviceSinkAPI;
-
-class ThreadedBasebandSampleSource;
-class UpChannelizer;
-class ATVMod;
+class DeviceUISet;
+class BasebandSampleSource;
 class QMessageBox;
 
 namespace Ui {
     class ATVModGUI;
 }
 
-class ATVModGUI : public RollupWidget, public PluginInstanceUI {
+class ATVModGUI : public RollupWidget, public PluginInstanceGUI {
     Q_OBJECT
 
 public:
-    static ATVModGUI* create(PluginAPI* pluginAPI, DeviceSinkAPI *deviceAPI);
-    void destroy();
+    static ATVModGUI* create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx);
+    virtual void destroy();
 
     void setName(const QString& name);
     QString getName() const;
@@ -50,14 +50,53 @@ public:
     void resetToDefaults();
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
-
+    virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
     virtual bool handleMessage(const Message& message);
 
-    static const QString m_channelID;
+public slots:
+    void channelMarkerChangedByCursor();
+
+private:
+    Ui::ATVModGUI* ui;
+    PluginAPI* m_pluginAPI;
+    DeviceUISet* m_deviceUISet;
+    ChannelMarker m_channelMarker;
+    ATVModSettings m_settings;
+    bool m_doApplySettings;
+
+    ATVMod* m_atvMod;
+    MovingAverage<double> m_channelPowerDbAvg;
+
+    QString m_imageFileName;
+    QString m_videoFileName;
+    quint32 m_videoLength;   //!< video file length in seconds
+    float m_videoFrameRate;  //!< video file frame rate
+    int m_frameCount;
+    std::size_t m_tickCount;
+    bool m_enableNavTime;
+    QMessageBox *m_camBusyFPSMessageBox;
+    int m_rfSliderDivisor;
+    MessageQueue m_inputMessageQueue;
+
+    explicit ATVModGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx, QWidget* parent = 0);
+    virtual ~ATVModGUI();
+
+    void blockApplySettings(bool block);
+    void applySettings(bool force = false);
+    void displaySettings();
+    void updateWithStreamData();
+    void updateWithStreamTime();
+    void setRFFiltersSlidersRange(int sampleRate);
+    void setChannelMarkerBandwidth();
+    int getNbLines();
+    int getFPS();
+    int getNbLinesIndex(int nbLines);
+    int getFPSIndex(int fps);
+
+    void leaveEvent(QEvent*);
+    void enterEvent(QEvent*);
 
 private slots:
-    void viewChanged();
-    void channelizerOutputSampleRateChanged();
     void handleSourceMessages();
 
     void on_deltaFrequency_changed(qint64 value);
@@ -71,7 +110,7 @@ private slots:
     void on_nbLines_currentIndexChanged(int index);
     void on_fps_currentIndexChanged(int index);
     void on_standard_currentIndexChanged(int index);
-    void on_invertVideo_clicked();
+    void on_invertVideo_clicked(bool checked);
     void on_uniformLevel_valueChanged(int value);
     void on_inputSelect_currentIndexChanged(int index);
     void on_imageFileDialog_clicked(bool checked);
@@ -90,49 +129,10 @@ private slots:
     void on_overlayText_textEdited(const QString& arg1);
 
     void onWidgetRolled(QWidget* widget, bool rollDown);
-    void onMenuDoubleClicked();
 
     void configureImageFileName();
     void configureVideoFileName();
     void tick();
-
-private:
-    Ui::ATVModGUI* ui;
-    PluginAPI* m_pluginAPI;
-    DeviceSinkAPI* m_deviceAPI;
-    ChannelMarker m_channelMarker;
-    bool m_basicSettingsShown;
-    bool m_doApplySettings;
-
-    ThreadedBasebandSampleSource* m_threadedChannelizer;
-    UpChannelizer* m_channelizer;
-    ATVMod* m_atvMod;
-    MovingAverage<double> m_channelPowerDbAvg;
-
-    QString m_imageFileName;
-    QString m_videoFileName;
-    quint32 m_videoLength;   //!< video file length in seconds
-    float m_videoFrameRate;  //!< video file frame rate
-    int m_frameCount;
-    std::size_t m_tickCount;
-    bool m_enableNavTime;
-    QMessageBox *m_camBusyFPSMessageBox;
-    int m_rfSliderDivisor;
-
-    explicit ATVModGUI(PluginAPI* pluginAPI, DeviceSinkAPI *deviceAPI, QWidget* parent = NULL);
-    virtual ~ATVModGUI();
-
-    void blockApplySettings(bool block);
-    void applySettings();
-    void updateWithStreamData();
-    void updateWithStreamTime();
-    void setRFFiltersSlidersRange(int sampleRate);
-    void setChannelMarkerBandwidth();
-    int getNbLines();
-    int getFPS();
-
-    void leaveEvent(QEvent*);
-    void enterEvent(QEvent*);
 };
 
 #endif /* PLUGINS_CHANNELTX_MODAM_AMMODGUI_H_ */

@@ -61,7 +61,7 @@ Baseband I/Q sample rate in kS/s. This is the device to host sample rate (8) div
 
 <h3>2: LO ppm correction</h3>
 
-Use this slider to adjust LO correction in ppm. It can be varied from -20.0 to 20.0 in 0.1 steps and is applied in hardware.
+Use this slider to adjust LO correction in ppm. It can be varied from -20.0 to 20.0 in 0.1 steps and is applied in hardware. This applies to the oscillator that controls both the Rx and Tx frequency therefore it is also changed on the Tx plugin if it is active.
 
 <h3>3-4: Auto correction options</h3>
 
@@ -72,9 +72,39 @@ These buttons control the software DSP auto correction options:
 
 &#9758; AD9363 has a good hardware DC and I/Q compensation so there should not be a use for this software auto-correction.
   
+<h3>4a: Transverter mode open dialog</h3>
+
+This button opens a dialog to set the transverter mode frequency translation options:
+
+![SDR Daemon source input stream trasverter dialog](../../../doc/img/RTLSDR_plugin_xvrt.png)
+
+Note that if you mouse over the button a tooltip appears that displays the translating frequency and if translation is enabled or disabled. When the frequency translation is enabled the button is lit.
+
+<h4>4a.1: Translating frequency</h4>
+
+You can set the translating frequency in Hz with this dial. Use the wheels to adjust the sample rate. Left click on a digit sets the cursor position at this digit. Right click on a digit sets all digits on the right to zero. This effectively floors value at the digit position. Wheels are moved with the mousewheel while pointing at the wheel or by selecting the wheel with the left mouse click and using the keyboard arroews. Pressing shift simultanoeusly moves digit by 5 and pressing control moves it by 2.
+
+The frequency set in the device is the frequency on the main dial (1) minus this frequency. Thus it is positive for down converters and negative for up converters. 
+
+For example a mixer at 120 MHz for HF operation you would set the value to -120,000,000 Hz so that if the main dial frequency is set at 7,130 kHz the PlutoSDR will be set to 127.130 MHz.
+
+If you use a down converter to receive the 6 cm band narrowband center frequency of 5670 MHz at 432 MHz you would set the translating frequency to 5760 - 432 = 5328 MHz thus dial +5,328,000,000 Hz.
+
+For bands even higher in the frequency spectrum the GHz digits are not really significant so you can have them set at 1 GHz. Thus to receive the 10368 MHz frequency at 432 MHz you would set the translating frequency to 1368 - 432 = 936 MHz. Note that in this case the frequency of the LO used in the mixer of the transverter is set at 9936 MHz.
+
+The Hz precision allows a fine tuning of the transverter LO offset
+
+<h4>4a.2: Translating frequency enable/disable</h4>
+
+Use this toggle button to activate or deactivate the frequency translation
+
+<h4>4a.3: Confirmation buttons</h4>
+
+Use these buttons to confirm ("OK") or dismiss ("Cancel") your changes. 
+
 <h3>5: Software decimation factor</h3>
 
-The I/Q stream from the LimeSDR is doensampled by a power of two by software inside the plugin before being sent to the passband. Possible values are increasing powers of two: 1 (no decimation), 2, 4, 8, 16, 32, 64.
+The I/Q stream from the PlutoSDR is doensampled by a power of two by software inside the plugin before being sent to the passband. Possible values are increasing powers of two: 1 (no decimation), 2, 4, 8, 16, 32, 64.
 
 <h3>6: Decimated bandpass center frequency placement</h3>
 
@@ -114,9 +144,11 @@ The FIR filter settings are the same on Rx and Tx side therefore any change here
 
 Use the wheels to adjust the bandwidth of the hardware FIR filter. Pressing shift simultanoeusly moves digit by 5 and pressing control moves it by 2.
 
-The filter is calculated as a windowed FIR filter with a Blackman-Harris window. This has a high out of band rejection value at the expense of a slightly smoother roll off compared to other filters. The bandwidth value sets the -6 dB point approxomately.
+The filter limits are calculated as 0.05 and 0.9 times the FIR filter input frequency for the lower and higher limit respectively. The FIR filter input frequency is the baseband sample rate (5) multiplied by the FIR interpolation factor (9)
 
-The limits are calculated as 0.1 and 0.9 times the FIR filter input frequency for the lower and higher limit respectively. The FIR filter input frequency is the baseband sample rate (8) multiplied by the FIR decimation factor (12)
+For bandwidths greater than 0.2 times the FIR filter input frequency the filter is calculated as a windowed FIR filter with a Blackman-Harris window. This has a high out of band rejection value at the expense of a slightly smoother roll off compared to other filters. The bandwidth value sets the -6 dB point approxomately.
+
+For bandwidths between 0.05 and 0.2 times the FIR filter input frequency the window used is a Hamming window giving a sharper transition.
 
 <h3>12: Hardware FIR decimation factor</h3>
 
@@ -140,6 +172,10 @@ See AD9363 documentation for details on AGC options.
 <h4>15: Global manual gain</h4>
 
 Use this button to adjust the global gain manually in manual gain mode. This button is disabled when AGC modes are selected with combo (14).
+
+<h4>15a: Actual gain fetched from device</h4>
+
+This is the actual gain in dB set in the device.
 
 <h4>16: Indicative RSSI</h4>
 

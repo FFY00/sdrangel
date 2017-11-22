@@ -30,6 +30,7 @@ class SDRANGEL_API DeviceSampleSink : public QObject {
 public:
 	DeviceSampleSink();
 	virtual ~DeviceSampleSink();
+	virtual void destroy() = 0;
 
 	virtual bool start() = 0;
 	virtual void stop() = 0;
@@ -41,7 +42,8 @@ public:
 	virtual bool handleMessage(const Message& message) = 0;
 
 	MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	MessageQueue *getOutputMessageQueueToGUI() { return &m_outputMessageQueueToGUI; }
+    void setMessageQueueToGUI(MessageQueue *queue) { m_guiMessageQueue = queue; }
+    MessageQueue *getMessageQueueToGUI() { return m_guiMessageQueue; }
 	SampleSourceFifo* getSampleFifo() { return &m_sampleSourceFifo; }
 
 protected slots:
@@ -50,7 +52,7 @@ protected slots:
 protected:
     SampleSourceFifo m_sampleSourceFifo;
 	MessageQueue m_inputMessageQueue; //!< Input queue to the sink
-    MessageQueue m_outputMessageQueueToGUI; //!< Output queue specialized for the sink GUI
+    MessageQueue *m_guiMessageQueue;  //!< Input message queue to the GUI
 };
 
 #endif /* SDRBASE_DSP_DEVICESAMPLESINK_H_ */

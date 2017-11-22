@@ -17,25 +17,27 @@
 #ifndef INCLUDE_BLADERFINPUTGUI_H
 #define INCLUDE_BLADERFINPUTGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QWidget>
 
+#include "util/messagequeue.h"
+
 #include "bladerfinput.h"
 
-class DeviceSourceAPI;
+class DeviceUISet;
 
 namespace Ui {
 	class BladerfInputGui;
 }
 
-class BladerfInputGui : public QWidget, public PluginInstanceUI {
+class BladerfInputGui : public QWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
-	explicit BladerfInputGui(DeviceSourceAPI *deviceAPI, QWidget* parent = NULL);
+	explicit BladerfInputGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
 	virtual ~BladerfInputGui();
-	void destroy();
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -45,12 +47,15 @@ public:
 	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
+	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::BladerfInputGui* ui;
 
-	DeviceSourceAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
+	bool m_forceSettings;
+	bool m_doApplySettings;
 	BladeRFInputSettings m_settings;
 	QTimer m_updateTimer;
 	QTimer m_statusTimer;
@@ -59,14 +64,16 @@ private:
     int m_sampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
 	int m_lastEngineState;
+	MessageQueue m_inputMessageQueue;
 
 	void displaySettings();
 	void sendSettings();
 	unsigned int getXb200Index(bool xb_200, bladerf_xb200_path xb200Path, bladerf_xb200_filter xb200Filter);
 	void updateSampleRateAndFrequency();
+	void blockApplySettings(bool block);
 
 private slots:
-    void handleDSPMessages();
+    void handleInputMessages();
 	void on_centerFrequency_changed(quint64 value);
     void on_sampleRate_changed(quint64 value);
 	void on_dcOffset_toggled(bool checked);

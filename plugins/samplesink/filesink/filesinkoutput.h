@@ -36,18 +36,21 @@ public:
 
 	public:
 		const FileSinkSettings& getSettings() const { return m_settings; }
+		bool getForce() const { return m_force; }
 
-		static MsgConfigureFileSink* create(const FileSinkSettings& settings)
+		static MsgConfigureFileSink* create(const FileSinkSettings& settings, bool force)
 		{
-			return new MsgConfigureFileSink(settings);
+			return new MsgConfigureFileSink(settings, force);
 		}
 
 	private:
 		FileSinkSettings m_settings;
+		bool m_force;
 
-		MsgConfigureFileSink(const FileSinkSettings& settings) :
+		MsgConfigureFileSink(const FileSinkSettings& settings, bool force) :
 			Message(),
-			m_settings(settings)
+			m_settings(settings),
+			m_force(force)
 		{ }
 	};
 
@@ -148,8 +151,9 @@ public:
 		{ }
 	};
 
-	FileSinkOutput(DeviceSinkAPI *deviceAPI, const QTimer& masterTimer);
+	FileSinkOutput(DeviceSinkAPI *deviceAPI);
 	virtual ~FileSinkOutput();
+	virtual void destroy();
 
 	virtual bool start();
 	virtual void stop();

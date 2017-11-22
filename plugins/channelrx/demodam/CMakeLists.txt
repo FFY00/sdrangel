@@ -3,12 +3,14 @@ project(am)
 set(am_SOURCES
 	amdemod.cpp
 	amdemodgui.cpp
+	amdemodsettings.cpp
 	amdemodplugin.cpp
 )
 
 set(am_HEADERS
 	amdemod.h
 	amdemodgui.h
+	amdemodsettings.h
 	amdemodplugin.h
 )
 
@@ -38,6 +40,7 @@ add_library(demodam SHARED
 target_link_libraries(demodam
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(demodam Core Widgets)

@@ -1,27 +1,23 @@
-#include "../../channelrx/demodlora/lorademodgui.h"
-#include "../../channelrx/demodlora/lorademodgui.h"
 
 #include <device/devicesourceapi.h>
+#include "device/deviceuiset.h"
 #include <dsp/downchannelizer.h>
 #include <QDockWidget>
 #include <QMainWindow>
 
-#include "../../../sdrbase/dsp/threadedbasebandsamplesink.h"
-#include "ui_lorademodgui.h"
 #include "ui_lorademodgui.h"
 #include "dsp/spectrumvis.h"
 #include "gui/glspectrum.h"
 #include "plugin/pluginapi.h"
 #include "util/simpleserializer.h"
-#include "gui/basicchannelsettingswidget.h"
 #include "dsp/dspengine.h"
-#include "../../channelrx/demodlora/lorademod.h"
 
-const QString LoRaDemodGUI::m_channelID = "de.maintech.sdrangelove.channel.lora";
+#include "lorademod.h"
+#include "lorademodgui.h"
 
-LoRaDemodGUI* LoRaDemodGUI::create(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI)
+LoRaDemodGUI* LoRaDemodGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
 {
-	LoRaDemodGUI* gui = new LoRaDemodGUI(pluginAPI, deviceAPI);
+	LoRaDemodGUI* gui = new LoRaDemodGUI(pluginAPI, deviceUISet, rxChannel);
 	return gui;
 }
 
@@ -52,63 +48,26 @@ void LoRaDemodGUI::setCenterFrequency(qint64 centerFrequency)
 
 void LoRaDemodGUI::resetToDefaults()
 {
-	blockApplySettings(true);
-
-	ui->BW->setValue(0);
-	ui->Spread->setValue(0);
-
-	blockApplySettings(false);
-	applySettings();
+    m_settings.resetToDefaults();
+    displaySettings();
+    applySettings(true);
 }
 
 QByteArray LoRaDemodGUI::serialize() const
 {
-	SimpleSerializer s(1);
-	s.writeS32(1, m_channelMarker.getCenterFrequency());
-	s.writeS32(2, ui->BW->value());
-	s.writeS32(3, ui->Spread->value());
-	s.writeBlob(4, ui->spectrumGUI->serialize());
-	return s.final();
+    return m_settings.serialize();
 }
 
 bool LoRaDemodGUI::deserialize(const QByteArray& data)
 {
-	SimpleDeserializer d(data);
-
-	if(!d.isValid())
-    {
-		resetToDefaults();
-		return false;
-	}
-
-	if(d.getVersion() == 1)
-    {
-		QByteArray bytetmp;
-		qint32 tmp;
-
-		blockApplySettings(true);
-	    m_channelMarker.blockSignals(true);
-
-		d.readS32(1, &tmp, 0);
-		m_channelMarker.setCenterFrequency(tmp);
-		d.readS32(2, &tmp, 0);
-		ui->BW->setValue(tmp);
-		d.readS32(3, &tmp, 0);
-		ui->Spread->setValue(tmp);
-		d.readBlob(4, &bytetmp);
-		ui->spectrumGUI->deserialize(bytetmp);
-
-		blockApplySettings(false);
-	    m_channelMarker.blockSignals(false);
-
-		applySettings();
-		return true;
-	}
-    else
-    {
-		resetToDefaults();
-		return false;
-	}
+    if(m_settings.deserialize(data)) {
+        displaySettings();
+        applySettings(true);
+        return true;
+    } else {
+        resetToDefaults();
+        return false;
+    }
 }
 
 bool LoRaDemodGUI::handleMessage(const Message& message __attribute__((unused)))
@@ -123,10 +82,18 @@ void LoRaDemodGUI::viewChanged()
 
 void LoRaDemodGUI::on_BW_valueChanged(int value)
 {
-	const int loraBW[] = BANDWIDTHSTRING;
-	int thisBW = loraBW[value];
+    if (value < 0) {
+        m_settings.m_bandwidthIndex = 0;
+    } else if (value < LoRaDemodSettings::nb_bandwidths) {
+        m_settings.m_bandwidthIndex = value;
+    } else {
+        m_settings.m_bandwidthIndex = LoRaDemodSettings::nb_bandwidths - 1;
+    }
+
+	int thisBW = LoRaDemodSettings::bandwidths[value];
 	ui->BWText->setText(QString("%1 Hz").arg(thisBW));
 	m_channelMarker.setBandwidth(thisBW);
+
 	applySettings();
 }
 
@@ -136,74 +103,52 @@ void LoRaDemodGUI::on_Spread_valueChanged(int value __attribute__((unused)))
 
 void LoRaDemodGUI::onWidgetRolled(QWidget* widget __attribute__((unused)), bool rollDown __attribute__((unused)))
 {
-	/*
-	if((widget == ui->spectrumContainer) && (m_LoRaDemod != NULL))
-		m_LoRaDemod->setSpectrum(m_threadedSampleSink->getMessageQueue(), rollDown);
-	*/
 }
 
-void LoRaDemodGUI::onMenuDoubleClicked()
-{
-	if(!m_basicSettingsShown) {
-		m_basicSettingsShown = true;
-		BasicChannelSettingsWidget* bcsw = new BasicChannelSettingsWidget(&m_channelMarker, this);
-		bcsw->show();
-	}
-}
-
-LoRaDemodGUI::LoRaDemodGUI(PluginAPI* pluginAPI, DeviceSourceAPI *deviceAPI, QWidget* parent) :
+LoRaDemodGUI::LoRaDemodGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel, QWidget* parent) :
 	RollupWidget(parent),
 	ui(new Ui::LoRaDemodGUI),
 	m_pluginAPI(pluginAPI),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
 	m_channelMarker(this),
-	m_basicSettingsShown(false),
 	m_doApplySettings(true)
 {
 	ui->setupUi(this);
 	setAttribute(Qt::WA_DeleteOnClose, true);
 	connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
-	connect(this, SIGNAL(menuDoubleClickEvent()), this, SLOT(onMenuDoubleClicked()));
 
 	m_spectrumVis = new SpectrumVis(ui->glSpectrum);
-	m_LoRaDemod = new LoRaDemod(m_spectrumVis);
-	m_channelizer = new DownChannelizer(m_LoRaDemod);
-	m_threadedChannelizer = new ThreadedBasebandSampleSink(m_channelizer);
-	m_deviceAPI->addThreadedSink(m_threadedChannelizer);
+	m_LoRaDemod = (LoRaDemod*) rxChannel; //new LoRaDemod(m_deviceUISet->m_deviceSourceAPI);
+	m_LoRaDemod->setSpectrumSink(m_spectrumVis);
 
 	ui->glSpectrum->setCenterFrequency(16000);
 	ui->glSpectrum->setSampleRate(32000);
 	ui->glSpectrum->setDisplayWaterfall(true);
 	ui->glSpectrum->setDisplayMaxHold(true);
 
-	setTitleColor(Qt::magenta);
-
-	//m_channelMarker = new ChannelMarker(this);
-	m_channelMarker.setColor(Qt::magenta);
-	m_channelMarker.setBandwidth(7813);
-	m_channelMarker.setCenterFrequency(0);
+	m_channelMarker.setMovable(false);
 	m_channelMarker.setVisible(true);
 
-	connect(&m_channelMarker, SIGNAL(changed()), this, SLOT(viewChanged()));
+	connect(&m_channelMarker, SIGNAL(changedByCursor()), this, SLOT(viewChanged()));
 
-	m_deviceAPI->registerChannelInstance(m_channelID, this);
-	m_deviceAPI->addChannelMarker(&m_channelMarker);
-	m_deviceAPI->addRollupWidget(this);
+	m_deviceUISet->registerRxChannelInstance(LoRaDemod::m_channelID, this);
+	m_deviceUISet->addChannelMarker(&m_channelMarker);
+	m_deviceUISet->addRollupWidget(this);
 
-	ui->spectrumGUI->setBuddies(m_channelizer->getInputMessageQueue(), m_spectrumVis, ui->glSpectrum);
+	ui->spectrumGUI->setBuddies(m_spectrumVis->getInputMessageQueue(), m_spectrumVis, ui->glSpectrum);
 
-	applySettings();
+	m_settings.setChannelMarker(&m_channelMarker);
+	m_settings.setSpectrumGUI(ui->spectrumGUI);
+
+	displaySettings();
+	applySettings(true);
 }
 
 LoRaDemodGUI::~LoRaDemodGUI()
 {
-    m_deviceAPI->removeChannelInstance(this);
-	m_deviceAPI->removeThreadedSink(m_threadedChannelizer);
-	delete m_threadedChannelizer;
-	delete m_channelizer;
-	delete m_LoRaDemod;
+    m_deviceUISet->removeRxChannelInstance(this);
+	delete m_LoRaDemod; // TODO: check this: when the GUI closes it has to delete the demodulator
 	delete m_spectrumVis;
-	//delete m_channelMarker;
 	delete ui;
 }
 
@@ -212,17 +157,35 @@ void LoRaDemodGUI::blockApplySettings(bool block)
     m_doApplySettings = !block;
 }
 
-void LoRaDemodGUI::applySettings()
+void LoRaDemodGUI::applySettings(bool force)
 {
 	if (m_doApplySettings)
 	{
-		const int  loraBW[] = BANDWIDTHSTRING;
-		int thisBW = loraBW[ui->BW->value()];
+        setTitleColor(m_channelMarker.getColor());
 
-		m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-			thisBW,
-			m_channelMarker.getCenterFrequency());
+        LoRaDemod::MsgConfigureChannelizer* channelConfigMsg = LoRaDemod::MsgConfigureChannelizer::create(
+                LoRaDemodSettings::bandwidths[m_settings.m_bandwidthIndex],
+                m_channelMarker.getCenterFrequency());
+        m_LoRaDemod->getInputMessageQueue()->push(channelConfigMsg);
 
-		m_LoRaDemod->configure(m_LoRaDemod->getInputMessageQueue(), thisBW);
+        LoRaDemod::MsgConfigureLoRaDemod* message = LoRaDemod::MsgConfigureLoRaDemod::create( m_settings, force);
+        m_LoRaDemod->getInputMessageQueue()->push(message);
 	}
+}
+
+void LoRaDemodGUI::displaySettings()
+{
+    int thisBW = LoRaDemodSettings::bandwidths[m_settings.m_bandwidthIndex];
+
+    m_channelMarker.blockSignals(true);
+    m_channelMarker.setBandwidth(thisBW);
+    m_channelMarker.setCenterFrequency(0);
+    m_channelMarker.setColor(m_settings.m_rgbColor);
+    setTitleColor(m_settings.m_rgbColor);
+    m_channelMarker.blockSignals(false);
+
+    blockApplySettings(true);
+    ui->BWText->setText(QString("%1 Hz").arg(thisBW));
+    ui->BW->setValue(m_settings.m_bandwidthIndex);
+    blockApplySettings(false);
 }

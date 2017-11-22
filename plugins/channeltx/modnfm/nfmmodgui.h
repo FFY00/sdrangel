@@ -17,30 +17,29 @@
 #ifndef PLUGINS_CHANNELTX_MODNFM_NFMMODGUI_H_
 #define PLUGINS_CHANNELTX_MODNFM_NFMMODGUI_H_
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include "gui/rollupwidget.h"
 #include "dsp/channelmarker.h"
 #include "dsp/movingaverage.h"
+#include "util/messagequeue.h"
 
 #include "nfmmod.h"
+#include "nfmmodsettings.h"
 
 class PluginAPI;
-class DeviceSinkAPI;
-
-class ThreadedBasebandSampleSource;
-class UpChannelizer;
-class NFMMod;
+class DeviceUISet;
+class BasebandSampleSource;
 
 namespace Ui {
     class NFMModGUI;
 }
 
-class NFMModGUI : public RollupWidget, public PluginInstanceUI {
+class NFMModGUI : public RollupWidget, public PluginInstanceGUI {
     Q_OBJECT
 
 public:
-    static NFMModGUI* create(PluginAPI* pluginAPI, DeviceSinkAPI *deviceAPI);
-    void destroy();
+    static NFMModGUI* create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx);
+    virtual void destroy();
 
     void setName(const QString& name);
     QString getName() const;
@@ -50,13 +49,45 @@ public:
     void resetToDefaults();
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
-
+    virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
     virtual bool handleMessage(const Message& message);
 
-    static const QString m_channelID;
+public slots:
+    void channelMarkerChangedByCursor();
+
+private:
+    Ui::NFMModGUI* ui;
+    PluginAPI* m_pluginAPI;
+    DeviceUISet* m_deviceUISet;
+    ChannelMarker m_channelMarker;
+    NFMModSettings m_settings;
+    bool m_doApplySettings;
+
+    NFMMod* m_nfmMod;
+    MovingAverage<double> m_channelPowerDbAvg;
+
+    QString m_fileName;
+    quint32 m_recordLength;
+    int m_recordSampleRate;
+    int m_samplesCount;
+    std::size_t m_tickCount;
+    bool m_enableNavTime;
+    NFMMod::NFMModInputAF m_modAFInput;
+    MessageQueue m_inputMessageQueue;
+
+    explicit NFMModGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx, QWidget* parent = 0);
+    virtual ~NFMModGUI();
+
+    void blockApplySettings(bool block);
+    void applySettings(bool force = false);
+    void displaySettings();
+    void updateWithStreamData();
+    void updateWithStreamTime();
+
+    void leaveEvent(QEvent*);
+    void enterEvent(QEvent*);
 
 private slots:
-    void viewChanged();
     void handleSourceMessages();
 
     void on_deltaFrequency_changed(qint64 value);
@@ -79,48 +110,9 @@ private slots:
     void on_ctcssOn_toggled(bool checked);
 
     void onWidgetRolled(QWidget* widget, bool rollDown);
-    void onMenuDoubleClicked();
 
     void configureFileName();
     void tick();
-
-private:
-    Ui::NFMModGUI* ui;
-    PluginAPI* m_pluginAPI;
-    DeviceSinkAPI* m_deviceAPI;
-    ChannelMarker m_channelMarker;
-    bool m_basicSettingsShown;
-    bool m_doApplySettings;
-
-    ThreadedBasebandSampleSource* m_threadedChannelizer;
-    UpChannelizer* m_channelizer;
-    NFMMod* m_nfmMod;
-    MovingAverage<double> m_channelPowerDbAvg;
-
-    QString m_fileName;
-    quint32 m_recordLength;
-    int m_recordSampleRate;
-    int m_samplesCount;
-    std::size_t m_tickCount;
-    bool m_enableNavTime;
-    NFMMod::NFMModInputAF m_modAFInput;
-
-    static const int m_rfBW[];
-    static const int m_nbRfBW;
-
-    static const float m_ctcssTones[];
-    static const int m_nbCTCSSTones;
-
-    explicit NFMModGUI(PluginAPI* pluginAPI, DeviceSinkAPI *deviceAPI, QWidget* parent = NULL);
-    virtual ~NFMModGUI();
-
-    void blockApplySettings(bool block);
-    void applySettings();
-    void updateWithStreamData();
-    void updateWithStreamTime();
-
-    void leaveEvent(QEvent*);
-    void enterEvent(QEvent*);
 };
 
 #endif /* PLUGINS_CHANNELTX_MODNFM_NFMMODGUI_H_ */

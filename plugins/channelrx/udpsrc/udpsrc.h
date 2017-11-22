@@ -18,9 +18,11 @@
 #ifndef INCLUDE_UDPSRC_H
 #define INCLUDE_UDPSRC_H
 
-#include <dsp/basebandsamplesink.h>
 #include <QMutex>
 #include <QHostAddress>
+
+#include "dsp/basebandsamplesink.h"
+#include "channel/channelsinkapi.h"
 #include "dsp/nco.h"
 #include "dsp/fftfilt.h"
 #include "dsp/interpolator.h"
@@ -32,50 +34,68 @@
 #include "util/message.h"
 #include "audio/audiofifo.h"
 
+#include "udpsrcsettings.h"
 
 class QUdpSocket;
-class UDPSrcGUI;
+class DeviceSourceAPI;
+class ThreadedBasebandSampleSink;
+class DownChannelizer;
 
-class UDPSrc : public BasebandSampleSink {
+class UDPSrc : public BasebandSampleSink, public ChannelSinkAPI {
 	Q_OBJECT
 
 public:
-	enum SampleFormat {
-		FormatS16LE,
-		FormatNFM,
-		FormatNFMMono,
-		FormatLSB,
-		FormatUSB,
-		FormatLSBMono,
-		FormatUSBMono,
-		FormatAMMono,
-		FormatAMNoDCMono,
-		FormatAMBPFMono,
-		FormatNone
-	};
+    class MsgConfigureUDPSrc : public Message {
+        MESSAGE_CLASS_DECLARATION
 
-	UDPSrc(MessageQueue* uiMessageQueue, UDPSrcGUI* udpSrcGUI, BasebandSampleSink* spectrum);
+    public:
+        const UDPSrcSettings& getSettings() const { return m_settings; }
+        bool getForce() const { return m_force; }
+
+        static MsgConfigureUDPSrc* create(const UDPSrcSettings& settings, bool force)
+        {
+            return new MsgConfigureUDPSrc(settings, force);
+        }
+
+    private:
+        UDPSrcSettings m_settings;
+        bool m_force;
+
+        MsgConfigureUDPSrc(const UDPSrcSettings& settings, bool force) :
+            Message(),
+            m_settings(settings),
+            m_force(force)
+        {
+        }
+    };
+
+    class MsgConfigureChannelizer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int getSampleRate() const { return m_sampleRate; }
+        int getCenterFrequency() const { return m_centerFrequency; }
+
+        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
+        {
+            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
+        }
+
+    private:
+        int m_sampleRate;
+        int  m_centerFrequency;
+
+        MsgConfigureChannelizer(int sampleRate, int centerFrequency) :
+            Message(),
+            m_sampleRate(sampleRate),
+            m_centerFrequency(centerFrequency)
+        { }
+    };
+
+	UDPSrc(DeviceSourceAPI *deviceAPI);
 	virtual ~UDPSrc();
+	void setSpectrum(BasebandSampleSink* spectrum) { m_spectrum = spectrum; }
 
-	void configure(MessageQueue* messageQueue,
-			SampleFormat sampleFormat,
-			Real outputSampleRate,
-			Real rfBandwidth,
-			int fmDeviation,
-			const QString& udpAddress,
-			int udpPort,
-			int audioPort,
-			bool force);
-	void configureImmediate(MessageQueue* messageQueue,
-			bool audioActive,
-			bool audioStereo,
-			Real gain,
-			int volume,
-			Real squelchDB,
-			Real squelchGate,
-			bool squelchEnabled,
-			bool agc,
-			bool force);
 	void setSpectrum(MessageQueue* messageQueue, bool enabled);
 	double getMagSq() const { return m_magsq; }
 	double getInMagSq() const { return m_inMagsq; }
@@ -86,146 +106,17 @@ public:
 	virtual void stop();
 	virtual bool handleMessage(const Message& cmd);
 
+    virtual int getDeltaFrequency() const { return m_absoluteFrequencyOffset; }
+    virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual void getTitle(QString& title) { title = m_settings.m_title; }
+
+    static const QString m_channelID;
 	static const int udpBlockSize = 512; // UDP block size in number of bytes
 
 public slots:
     void audioReadyRead();
 
 protected:
-	class MsgUDPSrcConfigure : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		SampleFormat getSampleFormat() const { return m_sampleFormat; }
-		Real getOutputSampleRate() const { return m_outputSampleRate; }
-		Real getRFBandwidth() const { return m_rfBandwidth; }
-		int getFMDeviation() const { return m_fmDeviation; }
-		const QString& getUDPAddress() const { return m_udpAddress; }
-		int getUDPPort() const { return m_udpPort; }
-		int getAudioPort() const { return m_audioPort; }
-		bool getForce() const { return m_force; }
-
-		static MsgUDPSrcConfigure* create(SampleFormat
-				sampleFormat,
-				Real sampleRate,
-				Real rfBandwidth,
-				int fmDeviation,
-				const QString& udpAddress,
-				int udpPort,
-				int audioPort,
-				bool force)
-		{
-			return new MsgUDPSrcConfigure(sampleFormat,
-					sampleRate,
-					rfBandwidth,
-					fmDeviation,
-					udpAddress,
-					udpPort,
-					audioPort,
-					force);
-		}
-
-	private:
-		SampleFormat m_sampleFormat;
-		Real m_outputSampleRate;
-		Real m_rfBandwidth;
-		int m_fmDeviation;
-		QString m_udpAddress;
-		int m_udpPort;
-		int m_audioPort;
-		bool m_force;
-
-		MsgUDPSrcConfigure(SampleFormat sampleFormat,
-				Real outputSampleRate,
-				Real rfBandwidth,
-				int fmDeviation,
-				const QString& udpAddress,
-				int udpPort,
-				int audioPort,
-				bool force) :
-			Message(),
-			m_sampleFormat(sampleFormat),
-			m_outputSampleRate(outputSampleRate),
-			m_rfBandwidth(rfBandwidth),
-			m_fmDeviation(fmDeviation),
-			m_udpAddress(udpAddress),
-			m_udpPort(udpPort),
-			m_audioPort(audioPort),
-			m_force(force)
-		{ }
-	};
-
-	class MsgUDPSrcConfigureImmediate : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		Real getGain() const { return m_gain; }
-		int getVolume() const { return m_volume; }
-		bool getAudioActive() const { return m_audioActive; }
-		bool getAudioStereo() const { return m_audioStereo; }
-		Real getSquelchDB() const { return m_squelchDB; }
-		Real getSquelchGate() const { return m_squelchGate; }
-		bool getSquelchEnabled() const { return m_squelchEnabled; }
-		bool getAGC() const { return m_agc; }
-		bool getForce() const { return m_force; }
-
-		static MsgUDPSrcConfigureImmediate* create(
-				bool audioActive,
-				bool audioStereo,
-				int gain,
-				int volume,
-				Real squelchDB,
-				Real squelchGate,
-				bool squelchEnabled,
-				bool agc,
-				bool force)
-		{
-			return new MsgUDPSrcConfigureImmediate(
-					audioActive,
-					audioStereo,
-					gain,
-					volume,
-					squelchDB,
-					squelchGate,
-					squelchEnabled,
-					agc,
-					force);
-		}
-
-	private:
-		Real m_gain;
-		int  m_volume;
-		bool m_audioActive;
-		bool m_audioStereo;
-		Real m_squelchDB;
-        Real m_squelchGate; // seconds
-		bool m_squelchEnabled;
-		bool m_agc;
-		bool m_force;
-
-		MsgUDPSrcConfigureImmediate(
-				bool audioActive,
-				bool audioStereo,
-				Real gain,
-				int volume,
-                Real squelchDB,
-                Real squelchGate,
-                bool squelchEnabled,
-                bool agc,
-                bool force) :
-			Message(),
-			m_gain(gain),
-            m_volume(volume),
-			m_audioActive(audioActive),
-			m_audioStereo(audioStereo),
-			m_squelchDB(squelchDB),
-            m_squelchGate(squelchGate),
-			m_squelchEnabled(squelchEnabled),
-			m_agc(agc),
-			m_force(force)
-		{ }
-	};
-
 	class MsgUDPSrcSpectrum : public Message {
 		MESSAGE_CLASS_DECLARATION
 
@@ -246,54 +137,13 @@ protected:
 		{ }
 	};
 
-    struct Config {
-        Real m_outputSampleRate;
-        SampleFormat m_sampleFormat;
-        Real m_inputSampleRate;
-        qint64 m_inputFrequencyOffset;
-        Real m_rfBandwidth;
-        int m_fmDeviation;
-        bool m_channelMute;
-        Real m_gain;
-        Real m_squelch; //!< squared magnitude
-        Real m_squelchGate; //!< seconds
-        bool m_squelchEnabled;
-        bool m_agc;
-        bool m_audioActive;
-        bool m_audioStereo;
-        int m_volume;
+    DeviceSourceAPI *m_deviceAPI;
+    ThreadedBasebandSampleSink* m_threadedChannelizer;
+    DownChannelizer* m_channelizer;
 
-        QString m_udpAddressStr;
-        quint16 m_udpPort;
-        quint16 m_audioPort;
+    UDPSrcSettings m_settings;
+    int m_absoluteFrequencyOffset;
 
-        Config() :
-            m_outputSampleRate(48000),
-            m_sampleFormat(FormatS16LE),
-            m_inputSampleRate(48000),
-            m_inputFrequencyOffset(0),
-            m_rfBandwidth(12500),
-            m_fmDeviation(2500),
-            m_channelMute(false),
-            m_gain(1.0),
-            m_squelch(1e-6),
-            m_squelchGate(0.0),
-            m_squelchEnabled(true),
-            m_agc(false),
-            m_audioActive(false),
-            m_audioStereo(false),
-            m_volume(20),
-            m_udpAddressStr("127.0.0.1"),
-            m_udpPort(9999),
-            m_audioPort(9998)
-        {}
-    };
-
-    Config m_config;
-    Config m_running;
-
-	MessageQueue* m_uiMessageQueue;
-	UDPSrcGUI* m_udpSrcGUI;
 	QUdpSocket *m_audioSocket;
 
 	double m_magsq;
@@ -330,6 +180,7 @@ protected:
 
     PhaseDiscriminators m_phaseDiscri;
 
+    double m_squelch;
     bool m_squelchOpen;
     int  m_squelchOpenCount;
     int  m_squelchCloseCount;
@@ -341,11 +192,11 @@ protected:
 
 	QMutex m_settingsMutex;
 
-	void apply(bool force);
+    void applySettings(const UDPSrcSettings& settings, bool force = false);
 
     inline void calculateSquelch(double value)
     {
-        if ((!m_running.m_squelchEnabled) || (value > m_running.m_squelch))
+        if ((!m_settings.m_squelchEnabled) || (value > m_squelch))
         {
             if (m_squelchGate == 0)
             {

@@ -28,6 +28,15 @@ public:
 	float getLatitude() const { return m_latitude; }
 	float getLongitude() const { return m_longitude; }
 
+	void setConsoleMinLogLevel(const QtMsgType& minLogLevel) { m_consoleMinLogLevel = minLogLevel; }
+    void setFileMinLogLevel(const QtMsgType& minLogLevel) { m_fileMinLogLevel = minLogLevel; }
+	void setUseLogFile(bool useLogFile) { m_useLogFile = useLogFile; }
+	void setLogFileName(const QString& value) { m_logFileName = value; }
+	QtMsgType getConsoleMinLogLevel() const { return m_consoleMinLogLevel; }
+    QtMsgType getFileMinLogLevel() const { return m_fileMinLogLevel; }
+	bool getUseLogFile() const { return m_useLogFile; }
+	const QString& getLogFileName() const { return m_logFileName; }
+
 protected:
 	QString m_sourceType;
 	QString m_sourceDevice;
@@ -38,6 +47,11 @@ protected:
 
 	float m_latitude;
 	float m_longitude;
+
+	QtMsgType m_consoleMinLogLevel;
+    QtMsgType m_fileMinLogLevel;
+	bool m_useLogFile;
+	QString m_logFileName;
 };
 
 #endif // INCLUDE_PREFERENCES_H

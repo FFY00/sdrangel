@@ -15,11 +15,13 @@ DEFINES += USE_SSE2=1
 QMAKE_CXXFLAGS += -msse2
 DEFINES += USE_SSE4_1=1
 QMAKE_CXXFLAGS += -msse4.1
+QMAKE_CXXFLAGS += -std=c++11
 
 CONFIG(MINGW32):LIBHACKRFSRC = "D:\softs\hackrf\host"
 CONFIG(MINGW64):LIBHACKRFSRC = "D:\softs\hackrf\host"
 INCLUDEPATH += $$PWD
 INCLUDEPATH += ../../../sdrbase
+INCLUDEPATH += ../../../sdrgui
 INCLUDEPATH += ../../../devices
 !macx:INCLUDEPATH += $$LIBHACKRFSRC
 macx:INCLUDEPATH += /opt/local/include
@@ -42,8 +44,9 @@ HEADERS += hackrfinputgui.h\
 FORMS += hackrfinputgui.ui
 
 LIBS += -L../../../sdrbase/$${build_subdir} -lsdrbase
+LIBS += -L../../../sdrgui/$${build_subdir} -lsdrgui
 !macx:LIBS += -L../../../libhackrf/$${build_subdir} -llibhackrf
 macx:LIBS += -L/opt/local/lib -lhackrf
 LIBS += -L../../../devices/$${build_subdir} -ldevices
 
-RESOURCES = ../../../sdrbase/resources/res.qrc
+RESOURCES = ../../../sdrgui/resources/res.qrc

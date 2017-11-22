@@ -4,12 +4,14 @@ set(modnfm_SOURCES
 	nfmmod.cpp
 	nfmmodgui.cpp
 	nfmmodplugin.cpp
+	nfmmodsettings.cpp
 )
 
 set(modnfm_HEADERS
 	nfmmod.h
 	nfmmodgui.h
 	nfmmodplugin.h
+	nfmmodsettings.h
 )
 
 set(modnfm_FORMS
@@ -36,6 +38,7 @@ add_library(modnfm SHARED
 target_link_libraries(modnfm
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(modnfm Core Widgets)

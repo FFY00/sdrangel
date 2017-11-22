@@ -35,33 +35,21 @@ public:
 
 	public:
 		const RTLSDRSettings& getSettings() const { return m_settings; }
+		bool getForce() const { return m_force; }
 
-		static MsgConfigureRTLSDR* create(const RTLSDRSettings& settings)
+		static MsgConfigureRTLSDR* create(const RTLSDRSettings& settings, bool force)
 		{
-			return new MsgConfigureRTLSDR(settings);
+			return new MsgConfigureRTLSDR(settings, force);
 		}
 
 	private:
 		RTLSDRSettings m_settings;
+		bool m_force;
 
-		MsgConfigureRTLSDR(const RTLSDRSettings& settings) :
+		MsgConfigureRTLSDR(const RTLSDRSettings& settings, bool force) :
 			Message(),
-			m_settings(settings)
-		{ }
-	};
-
-	class MsgQueryRTLSDR : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		static MsgQueryRTLSDR* create()
-		{
-			return new MsgQueryRTLSDR();
-		}
-
-	protected:
-		MsgQueryRTLSDR() :
-			Message()
+			m_settings(settings),
+			m_force(force)
 		{ }
 	};
 
@@ -106,6 +94,7 @@ public:
 
 	RTLSDRInput(DeviceSourceAPI *deviceAPI);
 	virtual ~RTLSDRInput();
+	virtual void destroy();
 
 	virtual bool start();
 	virtual void stop();
@@ -115,9 +104,19 @@ public:
 	virtual quint64 getCenterFrequency() const;
 
 	virtual bool handleMessage(const Message& message);
+	virtual void setMessageQueueToGUI(MessageQueue *queue);
 
 	const std::vector<int>& getGains() const { return m_gains; }
 	void set_ds_mode(int on);
+
+	static const quint64 frequencyLowRangeMin;
+	static const quint64 frequencyLowRangeMax;
+    static const quint64 frequencyHighRangeMin;
+    static const quint64 frequencyHighRangeMax;
+	static const int sampleRateLowRangeMin;
+    static const int sampleRateLowRangeMax;
+    static const int sampleRateHighRangeMin;
+    static const int sampleRateHighRangeMax;
 
 private:
 	DeviceSourceAPI *m_deviceAPI;

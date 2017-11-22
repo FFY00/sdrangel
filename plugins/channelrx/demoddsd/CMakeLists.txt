@@ -4,6 +4,8 @@ set(dsddemod_SOURCES
     dsddemod.cpp
     dsddemodgui.cpp
     dsddemodplugin.cpp
+    dsddemodbaudrates.cpp
+    dsddemodsettings.cpp
     dsddecoder.cpp
 )
 
@@ -11,6 +13,8 @@ set(dsddemod_HEADERS
     dsddemod.h
     dsddemodgui.h
     dsddemodplugin.h
+    dsddemodbaudrates.h
+    dsddemodsettings.h
     dsddecoder.h
 )
 
@@ -51,6 +55,7 @@ if (BUILD_DEBIAN)
 target_link_libraries(demoddsd
     ${QT_LIBRARIES}
     sdrbase
+    sdrgui
     dsdcc
     mbelib
 )
@@ -58,6 +63,7 @@ else (BUILD_DEBIAN)
 target_link_libraries(demoddsd
     ${QT_LIBRARIES}
     sdrbase
+    sdrgui
     ${LIBDSDCC_LIBRARIES}
     ${LIBMBE_LIBRARY}
 )

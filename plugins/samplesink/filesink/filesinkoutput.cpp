@@ -36,20 +36,25 @@ MESSAGE_CLASS_DEFINITION(FileSinkOutput::MsgConfigureFileSinkStreamTiming, Messa
 MESSAGE_CLASS_DEFINITION(FileSinkOutput::MsgReportFileSinkGeneration, Message)
 MESSAGE_CLASS_DEFINITION(FileSinkOutput::MsgReportFileSinkStreamTiming, Message)
 
-FileSinkOutput::FileSinkOutput(DeviceSinkAPI *deviceAPI, const QTimer& masterTimer) :
+FileSinkOutput::FileSinkOutput(DeviceSinkAPI *deviceAPI) :
     m_deviceAPI(deviceAPI),
 	m_settings(),
 	m_fileSinkThread(0),
 	m_deviceDescription("FileSink"),
 	m_fileName("./test.sdriq"),
 	m_startingTimeStamp(0),
-	m_masterTimer(masterTimer)
+	m_masterTimer(deviceAPI->getMasterTimer())
 {
 }
 
 FileSinkOutput::~FileSinkOutput()
 {
 	stop();
+}
+
+void FileSinkOutput::destroy()
+{
+    delete this;
 }
 
 void FileSinkOutput::openFileStream()
@@ -93,8 +98,11 @@ bool FileSinkOutput::start()
 	//applySettings(m_generalSettings, m_settings, true);
 	qDebug("FileSinkOutput::start: started");
 
-	MsgReportFileSinkGeneration *report = MsgReportFileSinkGeneration::create(true); // acquisition on
-	getOutputMessageQueueToGUI()->push(report);
+    if (getMessageQueueToGUI())
+    {
+        MsgReportFileSinkGeneration *report = MsgReportFileSinkGeneration::create(true); // acquisition on
+        getMessageQueueToGUI()->push(report);
+    }
 
 	return true;
 }
@@ -115,8 +123,11 @@ void FileSinkOutput::stop()
         m_ofstream.close();
     }
 
-    MsgReportFileSinkGeneration *report = MsgReportFileSinkGeneration::create(false); // acquisition off
-	getOutputMessageQueueToGUI()->push(report);
+    if (getMessageQueueToGUI())
+    {
+        MsgReportFileSinkGeneration *report = MsgReportFileSinkGeneration::create(false); // acquisition off
+        getMessageQueueToGUI()->push(report);
+    }
 }
 
 const QString& FileSinkOutput::getDeviceDescription() const
@@ -152,7 +163,7 @@ bool FileSinkOutput::handleMessage(const Message& message)
     {
 	    qDebug() << "FileSinkOutput::handleMessage: MsgConfigureFileSink";
 	    MsgConfigureFileSink& conf = (MsgConfigureFileSink&) message;
-        applySettings(conf.getSettings(), false);
+        applySettings(conf.getSettings(), conf.getForce());
         return true;
     }
 	else if (MsgConfigureFileSinkWork::match(message))
@@ -178,10 +189,10 @@ bool FileSinkOutput::handleMessage(const Message& message)
 	{
         MsgReportFileSinkStreamTiming *report;
 
-		if (m_fileSinkThread != 0)
+		if (m_fileSinkThread != 0 && getMessageQueueToGUI())
 		{
 			report = MsgReportFileSinkStreamTiming::create(m_fileSinkThread->getSamplesCount());
-			getOutputMessageQueueToGUI()->push(report);
+			getMessageQueueToGUI()->push(report);
 		}
 
 		return true;
@@ -234,7 +245,7 @@ void FileSinkOutput::applySettings(const FileSinkSettings& settings, bool force)
                 m_settings.m_sampleRate,
                 m_settings.m_log2Interp);
         DSPSignalNotification *notif = new DSPSignalNotification(m_settings.m_sampleRate, m_settings.m_centerFrequency);
-        m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+        m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
     }
 
 }

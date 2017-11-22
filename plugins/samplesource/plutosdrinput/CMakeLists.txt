@@ -38,7 +38,6 @@ endif (BUILD_DEBIAN)
 
 #include(${QT_USE_FILE})
 #add_definitions(${QT_DEFINITIONS})
-add_definitions("${QT_DEFINITIONS} -DLIBHACKRF_DYN_RATES")
 add_definitions(-DQT_PLUGIN)
 add_definitions(-DQT_SHARED)
 
@@ -56,6 +55,7 @@ target_link_libraries(inputplutosdr
     ${QT_LIBRARIES}
     iio
     sdrbase
+    sdrgui
     plutosdrdevice
 )
 else (BUILD_DEBIAN)
@@ -63,6 +63,7 @@ target_link_libraries(inputplutosdr
     ${QT_LIBRARIES}
     ${LIBIIO_LIBRARIES}
     sdrbase
+    sdrgui
     plutosdrdevice
 )
 endif (BUILD_DEBIAN)

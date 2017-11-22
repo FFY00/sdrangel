@@ -4,12 +4,14 @@ set(udpsrc_SOURCES
 	udpsrc.cpp
 	udpsrcgui.cpp
 	udpsrcplugin.cpp
+	udpsrcsettings.cpp
 )
 
 set(udpsrc_HEADERS
 	udpsrc.h
 	udpsrcgui.h
 	udpsrcplugin.h
+	udpsrcsettings.h
 )
 
 set(udpsrc_FORMS
@@ -37,6 +39,7 @@ add_library(demodudpsrc SHARED
 target_link_libraries(demodudpsrc
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(demodudpsrc Core Widgets Network)

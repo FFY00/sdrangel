@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "dsp/basebandsamplesink.h"
+#include "channel/channelsinkapi.h"
 #include "dsp/devicesamplesource.h"
 #include "dsp/dspcommands.h"
 #include "dsp/downchannelizer.h"
@@ -36,10 +37,13 @@
 #include "dsp/phasediscri.h"
 #include "audio/audiofifo.h"
 #include "util/message.h"
-#include "atvscreen.h"
+#include "atvscreeninterface.h"
 
+class DeviceSourceAPI;
+class ThreadedBasebandSampleSink;
+class DownChannelizer;
 
-class ATVDemod : public BasebandSampleSink
+class ATVDemod : public BasebandSampleSink, public ChannelSinkAPI
 {
 	Q_OBJECT
 
@@ -122,6 +126,26 @@ public:
         }
     };
 
+    class MsgConfigureChannelizer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int getCenterFrequency() const { return m_centerFrequency; }
+
+        static MsgConfigureChannelizer* create(int centerFrequency)
+        {
+            return new MsgConfigureChannelizer(centerFrequency);
+        }
+
+    private:
+        int m_centerFrequency;
+
+        MsgConfigureChannelizer(int centerFrequency) :
+            Message(),
+            m_centerFrequency(centerFrequency)
+        { }
+    };
+
     class MsgReportEffectiveSampleRate : public Message
     {
         MESSAGE_CLASS_DECLARATION
@@ -146,8 +170,29 @@ public:
         { }
     };
 
-    ATVDemod(BasebandSampleSink* objScopeSink);
+    class MsgReportChannelSampleRateChanged : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int getSampleRate() const { return m_sampleRate; }
+
+        static MsgReportChannelSampleRateChanged* create(int sampleRate)
+        {
+            return new MsgReportChannelSampleRateChanged(sampleRate);
+        }
+
+    private:
+        int m_sampleRate;
+
+        MsgReportChannelSampleRateChanged(int sampleRate) :
+            Message(),
+            m_sampleRate(sampleRate)
+        { }
+    };
+
+    ATVDemod(DeviceSourceAPI *deviceAPI);
 	~ATVDemod();
+	void setScopeSink(BasebandSampleSink* scopeSink) { m_scopeSink = scopeSink; }
 
     void configure(MessageQueue* objMessageQueue,
             float fltLineDurationUs,
@@ -164,6 +209,7 @@ public:
 			int intVideoTabIndex);
 
     void configureRF(MessageQueue* objMessageQueue,
+            int64_t frequencyOffset,
             ATVModulation enmModulation,
             float fltRFBandwidth,
             float fltRFOppBandwidth,
@@ -177,11 +223,20 @@ public:
 	virtual void stop();
 	virtual bool handleMessage(const Message& cmd);
 
-    void setATVScreen(ATVScreen *objScreen);
+    virtual int getDeltaFrequency() const { return m_rfRunning.m_intFrequencyOffset; }
+    virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual void getTitle(QString& title) { title = objectName(); }
+
+    void setATVScreen(ATVScreenInterface *objScreen);
     int getSampleRate();
     int getEffectiveSampleRate();
     double getMagSq() const { return m_objMagSqAverage.average(); } //!< Beware this is scaled to 2^30
     bool getBFOLocked();
+
+    static const QString m_channelID;
+
+private slots:
+    void channelSampleRateChanged();
 
 private:
     struct ATVConfigPrivate
@@ -268,6 +323,7 @@ private:
 
         public:
             static MsgConfigureRFATVDemod* create(
+                    int64_t frequencyOffset,
                     ATVModulation enmModulation,
                     float fltRFBandwidth,
                     float fltRFOppBandwidth,
@@ -277,6 +333,7 @@ private:
                     float fmDeviation)
             {
                 return new MsgConfigureRFATVDemod(
+                        frequencyOffset,
                         enmModulation,
                         fltRFBandwidth,
                         fltRFOppBandwidth,
@@ -290,6 +347,7 @@ private:
 
         private:
             MsgConfigureRFATVDemod(
+                    int64_t frequencyOffset,
                     ATVModulation enmModulation,
                     float fltRFBandwidth,
                     float fltRFOppBandwidth,
@@ -299,6 +357,7 @@ private:
                     float fmDeviation) :
                 Message()
             {
+                m_objMsgConfig.m_intFrequencyOffset = frequencyOffset;
                 m_objMsgConfig.m_enmModulation = enmModulation;
                 m_objMsgConfig.m_fltRFBandwidth = fltRFBandwidth;
                 m_objMsgConfig.m_fltRFOppBandwidth = fltRFOppBandwidth;
@@ -339,13 +398,17 @@ private:
         bool m_start;
     };
 
+    DeviceSourceAPI* m_deviceAPI;
+    ThreadedBasebandSampleSink* m_threadedChannelizer;
+    DownChannelizer* m_channelizer;
+
     //*************** SCOPE  ***************
 
-    BasebandSampleSink* m_objScopeSink;
-    SampleVector m_objScopeSampleBuffer;
+    BasebandSampleSink* m_scopeSink;
+    SampleVector m_scopeSampleBuffer;
 
     //*************** ATV PARAMETERS  ***************
-    ATVScreen * m_objRegisteredATVScreen;
+    ATVScreenInterface * m_registeredATVScreen;
 
     //int m_intNumberSamplePerLine;
     int m_intNumberSamplePerTop;
@@ -411,14 +474,14 @@ private:
 
     //QElapsedTimer m_objTimer;
 
-    ATVConfig m_objRunning;
-    ATVConfig m_objConfig;
+    ATVConfig m_running;
+    ATVConfig m_config;
 
-    ATVRFConfig m_objRFRunning;
-    ATVRFConfig m_objRFConfig;
+    ATVRFConfig m_rfRunning;
+    ATVRFConfig m_rfConfig;
 
-    ATVConfigPrivate m_objRunningPrivate;
-    ATVConfigPrivate m_objConfigPrivate;
+    ATVConfigPrivate m_runningPrivate;
+    ATVConfigPrivate m_configPrivate;
 
     QMutex m_objSettingsMutex;
 
@@ -429,17 +492,17 @@ private:
 
     inline void processHSkip(float& fltVal, int& intVal)
     {
-        m_objRegisteredATVScreen->setDataColor(m_intColIndex - m_intNumberSaplesPerHSync + m_intNumberSamplePerTop, intVal, intVal, intVal);
+        m_registeredATVScreen->setDataColor(m_intColIndex - m_intNumberSaplesPerHSync + m_intNumberSamplePerTop, intVal, intVal, intVal);
 
         // Horizontal Synchro detection
 
         // Floor Detection 0
-        if (fltVal < m_objRunning.m_fltVoltLevelSynchroTop)
+        if (fltVal < m_running.m_fltVoltLevelSynchroTop)
         {
             m_intSynchroPoints++;
         }
         // Black detection 0.3
-        else if (fltVal > m_objRunning.m_fltVoltLevelSynchroBlack)
+        else if (fltVal > m_running.m_fltVoltLevelSynchroBlack)
         {
             m_intSynchroPoints = 0;
         }
@@ -450,11 +513,11 @@ private:
 
         if (m_blnSynchroDetected)
         {
-            if (m_intSampleIndex >= (3 * m_objRunningPrivate.m_intNumberSamplePerLine)/2) // first after skip
+            if (m_intSampleIndex >= (3 * m_runningPrivate.m_intNumberSamplePerLine)/2) // first after skip
             {
                 //qDebug("VSync: %d %d %d", m_intColIndex, m_intSampleIndex, m_intLineIndex);
                 m_intAvgColIndex = m_intColIndex;
-                m_objRegisteredATVScreen->renderImage(0);
+                m_registeredATVScreen->renderImage(0);
 
                 m_intImageIndex++;
                 m_intLineIndex = 0;
@@ -468,25 +531,25 @@ private:
             m_intSampleIndex++;
         }
 
-        if (m_intColIndex < m_objRunningPrivate.m_intNumberSamplePerLine + m_intNumberSamplePerTop - 1)
+        if (m_intColIndex < m_runningPrivate.m_intNumberSamplePerLine + m_intNumberSamplePerTop - 1)
         {
             m_intColIndex++;
         }
         else
         {
-            if (m_objRunning.m_blnHSync && (m_intLineIndex == 0))
+            if (m_running.m_blnHSync && (m_intLineIndex == 0))
             {
                 //qDebug("HCorr: %d", m_intAvgColIndex);
-                m_intColIndex = m_intNumberSamplePerTop + (m_objRunningPrivate.m_intNumberSamplePerLine - m_intAvgColIndex)/2; // amortizing factor 1/2
+                m_intColIndex = m_intNumberSamplePerTop + (m_runningPrivate.m_intNumberSamplePerLine - m_intAvgColIndex)/2; // amortizing factor 1/2
             }
             else
             {
                 m_intColIndex = m_intNumberSamplePerTop;
             }
 
-            if ((m_objRFRunning.m_enmModulation == ATV_AM)
-                || (m_objRFRunning.m_enmModulation == ATV_USB)
-                || (m_objRFRunning.m_enmModulation == ATV_LSB))
+            if ((m_rfRunning.m_enmModulation == ATV_AM)
+                || (m_rfRunning.m_enmModulation == ATV_USB)
+                || (m_rfRunning.m_enmModulation == ATV_LSB))
             {
                 m_fltAmpMin = m_fltEffMin;
                 m_fltAmpMax = m_fltEffMax;
@@ -502,7 +565,7 @@ private:
                 m_fltEffMax = -2000000.0f;
             }
 
-            m_objRegisteredATVScreen->selectRow(m_intRowIndex);
+            m_registeredATVScreen->selectRow(m_intRowIndex);
             m_intLineIndex++;
             m_intRowIndex++;
         }
@@ -510,18 +573,18 @@ private:
 
     inline void processClassic(float& fltVal, int& intVal)
     {
-        int intSynchroTimeSamples= (3 * m_objRunningPrivate.m_intNumberSamplePerLine)/4;
-        float fltSynchroTrameLevel =  0.5f*((float)intSynchroTimeSamples) * m_objRunning.m_fltVoltLevelSynchroBlack;
+        int intSynchroTimeSamples= (3 * m_runningPrivate.m_intNumberSamplePerLine)/4;
+        float fltSynchroTrameLevel =  0.5f*((float)intSynchroTimeSamples) * m_running.m_fltVoltLevelSynchroBlack;
 
         // Horizontal Synchro detection
 
         // Floor Detection 0
-        if (fltVal < m_objRunning.m_fltVoltLevelSynchroTop)
+        if (fltVal < m_running.m_fltVoltLevelSynchroTop)
         {
             m_intSynchroPoints++;
         }
         // Black detection 0.3
-        else if (fltVal > m_objRunning.m_fltVoltLevelSynchroBlack)
+        else if (fltVal > m_running.m_fltVoltLevelSynchroBlack)
         {
             m_intSynchroPoints = 0;
         }
@@ -534,7 +597,7 @@ private:
 
         if (m_blnSynchroDetected)
         {
-            m_intAvgColIndex = m_intSampleIndex - m_intColIndex - (m_intColIndex < m_objRunningPrivate.m_intNumberSamplePerLine/2 ? 150 : 0);
+            m_intAvgColIndex = m_intSampleIndex - m_intColIndex - (m_intColIndex < m_runningPrivate.m_intNumberSamplePerLine/2 ? 150 : 0);
             //qDebug("HSync: %d %d %d", m_intSampleIndex, m_intColIndex, m_intAvgColIndex);
             m_intSampleIndex = 0;
         }
@@ -543,14 +606,14 @@ private:
             m_intSampleIndex++;
         }
 
-        if (!m_objRunning.m_blnHSync && (m_intColIndex >= m_objRunningPrivate.m_intNumberSamplePerLine)) // H Sync not active
+        if (!m_running.m_blnHSync && (m_intColIndex >= m_runningPrivate.m_intNumberSamplePerLine)) // H Sync not active
         {
             m_intColIndex = 0;
             blnNewLine = true;
         }
-        else if (m_intColIndex >= m_objRunningPrivate.m_intNumberSamplePerLine + m_intNumberSamplePerTop) // No valid H sync
+        else if (m_intColIndex >= m_runningPrivate.m_intNumberSamplePerLine + m_intNumberSamplePerTop) // No valid H sync
         {
-            if (m_objRunning.m_blnHSync && (m_intLineIndex == 0))
+            if (m_running.m_blnHSync && (m_intLineIndex == 0))
             {
                 //qDebug("HSync: %d %d", m_intColIndex, m_intAvgColIndex);
                 m_intColIndex = m_intNumberSamplePerTop + m_intAvgColIndex/4; // amortizing 1/4
@@ -565,9 +628,9 @@ private:
 
         if (blnNewLine)
         {
-            if ((m_objRFRunning.m_enmModulation == ATV_AM)
-                || (m_objRFRunning.m_enmModulation == ATV_USB)
-                || (m_objRFRunning.m_enmModulation == ATV_LSB))
+            if ((m_rfRunning.m_enmModulation == ATV_AM)
+                || (m_rfRunning.m_enmModulation == ATV_USB)
+                || (m_rfRunning.m_enmModulation == ATV_LSB))
             {
                 m_fltAmpMin = m_fltEffMin;
                 m_fltAmpMax = m_fltEffMax;
@@ -590,7 +653,7 @@ private:
 
             if (m_intRowIndex < m_intNumberOfLines)
             {
-                m_objRegisteredATVScreen->selectRow(m_intRowIndex - m_intNumberOfSyncLines);
+                m_registeredATVScreen->selectRow(m_intRowIndex - m_intNumberOfSyncLines);
             }
 
             m_intLineIndex++;
@@ -599,12 +662,12 @@ private:
         // Filling pixels
 
         // +4 is to compensate shift due to hsync amortizing factor of 1/4
-        m_objRegisteredATVScreen->setDataColor(m_intColIndex - m_intNumberSaplesPerHSync + m_intNumberSamplePerTop + 4, intVal, intVal, intVal);
+        m_registeredATVScreen->setDataColor(m_intColIndex - m_intNumberSaplesPerHSync + m_intNumberSamplePerTop + 4, intVal, intVal, intVal);
         m_intColIndex++;
 
         // Vertical sync and image rendering
 
-        if ((m_objRunning.m_blnVSync) && (m_intLineIndex < m_intNumberOfLines)) // VSync activated and lines in range
+        if ((m_running.m_blnVSync) && (m_intLineIndex < m_intNumberOfLines)) // VSync activated and lines in range
         {
             if (m_intColIndex >= intSynchroTimeSamples)
             {
@@ -618,7 +681,7 @@ private:
 
                         if ((m_intLineIndex % 2 == 0) || !m_interleaved) // even => odd image
                         {
-                            m_objRegisteredATVScreen->renderImage(0);
+                            m_registeredATVScreen->renderImage(0);
                             m_intRowIndex = 1;
                         }
                         else
@@ -626,7 +689,7 @@ private:
                             m_intRowIndex = 0;
                         }
 
-                        m_objRegisteredATVScreen->selectRow(m_intRowIndex - m_intNumberOfSyncLines);
+                        m_registeredATVScreen->selectRow(m_intRowIndex - m_intNumberOfSyncLines);
                         m_intLineIndex = 0;
                         m_intImageIndex++;
                     }
@@ -643,9 +706,9 @@ private:
             {
                 if (m_intImageIndex % 2 == 1) // odd image
                 {
-                    m_objRegisteredATVScreen->renderImage(0);
+                    m_registeredATVScreen->renderImage(0);
 
-                    if (m_objRFRunning.m_enmModulation == ATV_AM)
+                    if (m_rfRunning.m_enmModulation == ATV_AM)
                     {
                         m_fltAmpMin = m_fltEffMin;
                         m_fltAmpMax = m_fltEffMax;
@@ -668,7 +731,7 @@ private:
                     m_intRowIndex = 0;
                 }
 
-                m_objRegisteredATVScreen->selectRow(m_intRowIndex - m_intNumberOfSyncLines);
+                m_registeredATVScreen->selectRow(m_intRowIndex - m_intNumberOfSyncLines);
                 m_intLineIndex = 0;
                 m_intImageIndex++;
             }

@@ -3,6 +3,7 @@ project(bfm)
 set(bfm_SOURCES
 	bfmdemod.cpp
 	bfmdemodgui.cpp
+	bfmdemodsettings.cpp
 	bfmplugin.cpp
 	rdsdemod.cpp
 	rdsdecoder.cpp
@@ -13,6 +14,7 @@ set(bfm_SOURCES
 set(bfm_HEADERS
 	bfmdemod.h
 	bfmdemodgui.h
+	bfmdemodsettings.h
 	bfmplugin.h
 	rdsdemod.h
 	rdsdecoder.h
@@ -45,6 +47,7 @@ add_library(demodbfm SHARED
 target_link_libraries(demodbfm
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(demodbfm Core Widgets)

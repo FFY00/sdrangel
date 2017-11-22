@@ -4,12 +4,14 @@ set(tcpsrc_SOURCES
 	tcpsrc.cpp
 	tcpsrcgui.cpp
 	tcpsrcplugin.cpp
+	tcpsrcsettings.cpp
 )
 
 set(tcpsrc_HEADERS
 	tcpsrc.h
 	tcpsrcgui.h
 	tcpsrcplugin.h
+	tcpsrcsettings.h
 )
 
 set(tcpsrc_FORMS
@@ -38,6 +40,7 @@ add_library(demodtcpsrc SHARED
 target_link_libraries(demodtcpsrc
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(demodtcpsrc Core Widgets Network)

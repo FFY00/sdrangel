@@ -26,8 +26,13 @@
 #include <QString>
 #include <QFileDialog>
 
+#ifdef _WIN32
+#include <nn.h>
+#include <pair.h>
+#else
 #include <nanomsg/nn.h>
 #include <nanomsg/pair.h>
+#endif
 
 #include "ui_sdrdaemonsourcegui.h"
 #include "gui/colormapper.h"
@@ -38,12 +43,13 @@
 #include "util/simpleserializer.h"
 
 #include <device/devicesourceapi.h>
+#include "device/deviceuiset.h"
 #include "sdrdaemonsourcegui.h"
 
-SDRdaemonSourceGui::SDRdaemonSourceGui(DeviceSourceAPI *deviceAPI, QWidget* parent) :
+SDRdaemonSourceGui::SDRdaemonSourceGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	QWidget(parent),
 	ui(new Ui::SDRdaemonSourceGui),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
 	m_sampleSource(NULL),
 	m_acquisition(false),
 	m_lastEngineState((DSPDeviceSourceEngine::State)-1),
@@ -94,16 +100,14 @@ SDRdaemonSourceGui::SDRdaemonSourceGui(DeviceSourceAPI *deviceAPI, QWidget* pare
 
 	connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
 	m_statusTimer.start(500);
-	connect(&(deviceAPI->getMainWindow()->getMasterTimer()), SIGNAL(timeout()), this, SLOT(tick()));
+	connect(&(m_deviceUISet->m_deviceSourceAPI->getMasterTimer()), SIGNAL(timeout()), this, SLOT(tick()));
     connect(&m_updateTimer, SIGNAL(timeout()), this, SLOT(updateHardware()));
 
-	m_sampleSource = new SDRdaemonSourceInput(deviceAPI->getMainWindow()->getMasterTimer(), m_deviceAPI);
-	connect(m_sampleSource->getOutputMessageQueueToGUI(), SIGNAL(messageEnqueued()), this, SLOT(handleSourceMessages()));
-	m_deviceAPI->setSource(m_sampleSource);
+    m_sampleSource = (SDRdaemonSourceInput*) m_deviceUISet->m_deviceSourceAPI->getSampleSource();
 
 	displaySettings();
 
-    connect(m_deviceAPI->getDeviceOutputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleDSPMessages()), Qt::QueuedConnection);
+	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 
     m_eventsTime.start();
     displayEventCounts();
@@ -116,7 +120,6 @@ SDRdaemonSourceGui::SDRdaemonSourceGui(DeviceSourceAPI *deviceAPI, QWidget* pare
 
 SDRdaemonSourceGui::~SDRdaemonSourceGui()
 {
-    delete m_sampleSource;
 	delete ui;
 }
 
@@ -250,48 +253,40 @@ bool SDRdaemonSourceGui::handleMessage(const Message& message)
 	}
 }
 
-void SDRdaemonSourceGui::handleDSPMessages()
+void SDRdaemonSourceGui::handleInputMessages()
 {
     Message* message;
 
-    while ((message = m_deviceAPI->getDeviceOutputMessageQueue()->pop()) != 0)
+    while ((message = m_inputMessageQueue.pop()) != 0)
     {
-        qDebug("SDRdaemonGui::handleDSPMessages: message: %s", message->getIdentifier());
+        //qDebug("SDRdaemonGui::handleInputMessages: message: %s", message->getIdentifier());
 
         if (DSPSignalNotification::match(*message))
         {
             DSPSignalNotification* notif = (DSPSignalNotification*) message;
             m_deviceSampleRate = notif->getSampleRate();
             m_deviceCenterFrequency = notif->getCenterFrequency();
-            qDebug("SDRdaemonGui::handleDSPMessages: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
+            qDebug("SDRdaemonGui::handleInputMessages: DSPSignalNotification: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
             updateSampleRateAndFrequency();
             DSPSignalNotification *fwd = new DSPSignalNotification(*notif);
             m_sampleSource->getInputMessageQueue()->push(fwd);
 
             delete message;
         }
+        else
+        {
+            if (handleMessage(*message))
+            {
+                delete message;
+            }
+        }
     }
-}
-
-void SDRdaemonSourceGui::handleSourceMessages()
-{
-	Message* message;
-
-	while ((message = m_sampleSource->getOutputMessageQueueToGUI()->pop()) != 0)
-	{
-		//qDebug("SDRdaemonGui::handleSourceMessages: message: %s", message->getIdentifier());
-
-		if (handleMessage(*message))
-		{
-			delete message;
-		}
-	}
 }
 
 void SDRdaemonSourceGui::updateSampleRateAndFrequency()
 {
-    m_deviceAPI->getSpectrum()->setSampleRate(m_deviceSampleRate);
-    m_deviceAPI->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
+    m_deviceUISet->getSpectrum()->setSampleRate(m_deviceSampleRate);
+    m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
     ui->deviceRateText->setText(tr("%1k").arg((float)m_deviceSampleRate / 1000));
 }
 
@@ -598,15 +593,15 @@ void SDRdaemonSourceGui::on_startStop_toggled(bool checked)
 {
     if (checked)
     {
-        if (m_deviceAPI->initAcquisition())
+        if (m_deviceUISet->m_deviceSourceAPI->initAcquisition())
         {
-            m_deviceAPI->startAcquisition();
+            m_deviceUISet->m_deviceSourceAPI->startAcquisition();
             DSPEngine::instance()->startAudioOutput();
         }
     }
     else
     {
-        m_deviceAPI->stopAcquisition();
+        m_deviceUISet->m_deviceSourceAPI->stopAcquisition();
         DSPEngine::instance()->stopAudioOutput();
     }
 }
@@ -737,7 +732,7 @@ void SDRdaemonSourceGui::updateHardware()
 
 void SDRdaemonSourceGui::updateStatus()
 {
-    int state = m_deviceAPI->state();
+    int state = m_deviceUISet->m_deviceSourceAPI->state();
 
     if(m_lastEngineState != state)
     {
@@ -754,7 +749,7 @@ void SDRdaemonSourceGui::updateStatus()
                 break;
             case DSPDeviceSourceEngine::StError:
                 ui->startStop->setStyleSheet("QToolButton { background-color : red; }");
-                QMessageBox::information(this, tr("Message"), m_deviceAPI->errorMessage());
+                QMessageBox::information(this, tr("Message"), m_deviceUISet->m_deviceSourceAPI->errorMessage());
                 break;
             default:
                 break;

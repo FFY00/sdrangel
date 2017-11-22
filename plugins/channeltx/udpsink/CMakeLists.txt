@@ -6,6 +6,7 @@ set(udpsink_SOURCES
 	udpsinkplugin.cpp
 	udpsinkudphandler.cpp
 	udpsinkmsg.cpp
+	udpsinksettings.cpp
 )
 
 set(udpsink_HEADERS
@@ -14,6 +15,7 @@ set(udpsink_HEADERS
 	udpsinkplugin.h
 	udpsinkudphandler.h
 	udpsinkmsg.h
+	udpsinksettings.h
 )
 
 set(udpsink_FORMS
@@ -41,6 +43,7 @@ add_library(modudpsink SHARED
 target_link_libraries(modudpsink
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(modudpsink Core Widgets Network)

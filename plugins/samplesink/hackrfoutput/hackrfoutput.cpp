@@ -52,6 +52,11 @@ HackRFOutput::~HackRFOutput()
 	m_deviceAPI->setBuddySharedPtr(0);
 }
 
+void HackRFOutput::destroy()
+{
+    delete this;
+}
+
 bool HackRFOutput::openDevice()
 {
     if (m_dev != 0)
@@ -178,15 +183,25 @@ bool HackRFOutput::handleMessage(const Message& message)
 		MsgConfigureHackRF& conf = (MsgConfigureHackRF&) message;
 		qDebug() << "HackRFOutput::handleMessage: MsgConfigureHackRF";
 
-		bool success = applySettings(conf.getSettings(), false);
+		bool success = applySettings(conf.getSettings(), conf.getForce());
 
 		if (!success)
 		{
-			qDebug("HackRFOutput::handleMessage: config error");
+			qDebug("HackRFOutput::handleMessage: MsgConfigureHackRF: config error");
 		}
 
 		return true;
 	}
+    else if (DeviceHackRFShared::MsgConfigureFrequencyDelta::match(message))
+    {
+        DeviceHackRFShared::MsgConfigureFrequencyDelta& conf = (DeviceHackRFShared::MsgConfigureFrequencyDelta&) message;
+        HackRFOutputSettings newSettings = m_settings;
+        newSettings.m_centerFrequency = m_settings.m_centerFrequency + conf.getFrequencyDelta();
+        qDebug() << "HackRFOutput::handleMessage: DeviceHackRFShared::MsgConfigureFrequencyDelta: newFreq: " << newSettings.m_centerFrequency;
+        applySettings(newSettings, false);
+
+        return true;
+    }
 	else
 	{
 		return false;
@@ -376,7 +391,7 @@ bool HackRFOutput::applySettings(const HackRFOutputSettings& settings, bool forc
 	{
 		int sampleRate = m_settings.m_devSampleRate/(1<<m_settings.m_log2Interp);
 		DSPSignalNotification *notif = new DSPSignalNotification(sampleRate, m_settings.m_centerFrequency);
-		m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+		m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
 	}
 
 	return true;

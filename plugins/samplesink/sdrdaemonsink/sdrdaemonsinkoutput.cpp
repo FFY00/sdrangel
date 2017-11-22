@@ -35,19 +35,24 @@ MESSAGE_CLASS_DEFINITION(SDRdaemonSinkOutput::MsgConfigureSDRdaemonSinkStreamTim
 MESSAGE_CLASS_DEFINITION(SDRdaemonSinkOutput::MsgConfigureSDRdaemonSinkChunkCorrection, Message)
 MESSAGE_CLASS_DEFINITION(SDRdaemonSinkOutput::MsgReportSDRdaemonSinkStreamTiming, Message)
 
-SDRdaemonSinkOutput::SDRdaemonSinkOutput(DeviceSinkAPI *deviceAPI, const QTimer& masterTimer) :
+SDRdaemonSinkOutput::SDRdaemonSinkOutput(DeviceSinkAPI *deviceAPI) :
     m_deviceAPI(deviceAPI),
 	m_settings(),
     m_sdrDaemonSinkThread(0),
 	m_deviceDescription("SDRdaemonSink"),
     m_startingTimeStamp(0),
-	m_masterTimer(masterTimer)
+	m_masterTimer(deviceAPI->getMasterTimer())
 {
 }
 
 SDRdaemonSinkOutput::~SDRdaemonSinkOutput()
 {
 	stop();
+}
+
+void SDRdaemonSinkOutput::destroy()
+{
+    delete this;
 }
 
 bool SDRdaemonSinkOutput::start()
@@ -144,10 +149,10 @@ bool SDRdaemonSinkOutput::handleMessage(const Message& message)
 	{
         MsgReportSDRdaemonSinkStreamTiming *report;
 
-		if (m_sdrDaemonSinkThread != 0)
+		if (m_sdrDaemonSinkThread != 0 && getMessageQueueToGUI())
 		{
 			report = MsgReportSDRdaemonSinkStreamTiming::create(m_sdrDaemonSinkThread->getSamplesCount());
-			getOutputMessageQueueToGUI()->push(report);
+			getMessageQueueToGUI()->push(report);
 		}
 
 		return true;
@@ -263,7 +268,7 @@ void SDRdaemonSinkOutput::applySettings(const SDRdaemonSinkSettings& settings, b
     if (forwardChange)
     {
         DSPSignalNotification *notif = new DSPSignalNotification(m_settings.m_sampleRate, m_settings.m_centerFrequency);
-        m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+        m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
     }
 
 }

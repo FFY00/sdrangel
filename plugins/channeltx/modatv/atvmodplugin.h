@@ -21,6 +21,7 @@
 #include "plugin/plugininterface.h"
 
 class DeviceSinkAPI;
+class BasebandSampleSource;
 
 class ATVModPlugin : public QObject, PluginInterface {
     Q_OBJECT
@@ -28,20 +29,18 @@ class ATVModPlugin : public QObject, PluginInterface {
     Q_PLUGIN_METADATA(IID "sdrangel.channeltx.atvmod")
 
 public:
-    explicit ATVModPlugin(QObject* parent = NULL);
+    explicit ATVModPlugin(QObject* parent = 0);
 
     const PluginDescriptor& getPluginDescriptor() const;
     void initPlugin(PluginAPI* pluginAPI);
 
-    PluginInstanceUI* createTxChannel(const QString& channelName, DeviceSinkAPI *deviceAPI);
+    PluginInstanceGUI* createTxChannelGUI(const QString& channelName, DeviceUISet *deviceUISet, BasebandSampleSource *txChannel);
+    BasebandSampleSource* createTxChannel(const QString& channelName, DeviceSinkAPI *deviceAPI);
 
 private:
     static const PluginDescriptor m_pluginDescriptor;
 
     PluginAPI* m_pluginAPI;
-
-private slots:
-    void createInstanceModATV(DeviceSinkAPI *deviceAPI);
 };
 
 #endif /* PLUGINS_CHANNELTX_MODATV_ATVMODPLUGIN_H_ */

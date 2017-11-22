@@ -17,26 +17,27 @@
 #ifndef PLUGINS_SAMPLESOURCE_PLUTOSDRINPUT_PLUTOSDRINPUTGUI_H_
 #define PLUGINS_SAMPLESOURCE_PLUTOSDRINPUT_PLUTOSDRINPUTGUI_H_
 
+#include <plugin/plugininstancegui.h>
 #include <QObject>
 #include <QWidget>
 #include <QTimer>
 
-#include <plugin/plugininstanceui.h>
+#include "util/messagequeue.h"
 
 #include "plutosdrinputsettings.h"
 
-class DeviceSourceAPI;
 class DeviceSampleSource;
+class DeviceUISet;
 
 namespace Ui {
     class PlutoSDRInputGUI;
 }
 
-class PlutoSDRInputGui : public QWidget, public PluginInstanceUI {
+class PlutoSDRInputGui : public QWidget, public PluginInstanceGUI {
     Q_OBJECT
 
 public:
-    explicit PlutoSDRInputGui(DeviceSourceAPI *deviceAPI, QWidget* parent = 0);
+    explicit PlutoSDRInputGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
     virtual ~PlutoSDRInputGui();
 
     virtual void destroy();
@@ -47,11 +48,12 @@ public:
     virtual void setCenterFrequency(qint64 centerFrequency);
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
+    virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
     virtual bool handleMessage(const Message& message);
 
 private:
     Ui::PlutoSDRInputGUI* ui;
-    DeviceSourceAPI* m_deviceAPI;
+    DeviceUISet* m_deviceUISet;
     PlutoSDRInputSettings m_settings;
     bool m_forceSettings;
     QTimer m_updateTimer;
@@ -62,6 +64,7 @@ private:
     int m_lastEngineState;
     bool m_doApplySettings;
     uint32_t m_statusCounter;
+    MessageQueue m_inputMessageQueue;
 
     void displaySettings();
     void sendSettings(bool forceSettings = false);
@@ -69,6 +72,7 @@ private:
     void updateSampleRateAndFrequency();
     void setFIRBWLimits();
     void setSampleRateLimits();
+    void updateFrequencyLimits();
 
 private slots:
     void on_startStop_toggled(bool checked);
@@ -88,9 +92,10 @@ private slots:
     void on_gainMode_currentIndexChanged(int index);
     void on_gain_valueChanged(int value);
     void on_antenna_currentIndexChanged(int index);
+    void on_transverter_clicked();
     void updateHardware();
     void updateStatus();
-    void handleDSPMessages();
+    void handleInputMessages();
 };
 
 #endif /* PLUGINS_SAMPLESOURCE_PLUTOSDRINPUT_PLUTOSDRINPUTGUI_H_ */

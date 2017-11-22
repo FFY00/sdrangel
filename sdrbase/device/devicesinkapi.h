@@ -23,24 +23,24 @@
 #include "dsp/dspdevicesinkengine.h"
 #include "util/export.h"
 
-class MainWindow;
-class GLSpectrum;
-class ChannelWindow;
 class BasebandSampleSource;
 class ThreadedBasebandSampleSource;
 class DeviceSampleSink;
 class MessageQueue;
-class ChannelMarker;
-class QWidget;
-class PluginInstanceUI;
-class PluginAPI;
+class PluginInstanceGUI;
+class PluginInterface;
 class Preset;
 class DeviceSourceAPI;
+class ChannelSourceAPI;
 
 class SDRANGEL_API DeviceSinkAPI : public QObject {
     Q_OBJECT
 
 public:
+    DeviceSinkAPI(int deviceTabIndex,
+            DSPDeviceSinkEngine *deviceEngine);
+    ~DeviceSinkAPI();
+
     // Device engine stuff
     void addSpectrumSink(BasebandSampleSink* sink);                //!< Add the spectrum sample sink to device engine (spectrum vis)
     void removeSpectrumSink(BasebandSampleSink* sink);             //!< Remove the spectrum sample sink from device engine (spectrum vis)
@@ -48,45 +48,52 @@ public:
     void removeSource(BasebandSampleSource* sink);                 //!< Remove a baseband sample source from device engine
     void addThreadedSource(ThreadedBasebandSampleSource* sink);    //!< Add a baseband sample source that will run on its own thread to device engine
     void removeThreadedSource(ThreadedBasebandSampleSource* sink); //!< Remove a baseband sample source that runs on its own thread from device engine
+    void addChannelAPI(ChannelSourceAPI* channelAPI);
+    void removeChannelAPI(ChannelSourceAPI* channelAPI);
     uint32_t getNumberOfSources();
-    void setSink(DeviceSampleSink* sink);                          //!< Set device engine sample sink type
+    void setSampleSink(DeviceSampleSink* sink);                    //!< Set device engine sample sink type
+    DeviceSampleSink *getSampleSink();                             //!< Return pointer to the device sample sink
     bool initGeneration();                                         //!< Initialize device engine generation sequence
     bool startGeneration();                                        //!< Start device engine generation sequence
     void stopGeneration();                                         //!< Stop device engine generation sequence
     DSPDeviceSinkEngine::State state() const;                      //!< device engine state
     QString errorMessage();                                        //!< Return the current device engine error message
     uint getDeviceUID() const;                                     //!< Return the current device engine unique ID
-    MessageQueue *getDeviceInputMessageQueue();
-    MessageQueue *getDeviceOutputMessageQueue();
-    // device related stuff
-    GLSpectrum *getSpectrum();                           //!< Direct spectrum getter
-    void addChannelMarker(ChannelMarker* channelMarker); //!< Add channel marker to spectrum
-    ChannelWindow *getChannelWindow();                   //!< Direct channel window getter
-    void addRollupWidget(QWidget *widget);               //!< Add rollup widget to channel window
-    void setOutputGUI(QWidget* outputGUI, const QString& sinkDisplayName);
+    MessageQueue *getDeviceEngineInputMessageQueue();
+    MessageQueue *getSampleSinkInputMessageQueue();
+    MessageQueue *getSampleSinkGUIMessageQueue();
 
     void setHardwareId(const QString& id);
     void setSampleSinkId(const QString& id);
+    void resetSampleSinkId();
     void setSampleSinkSerial(const QString& serial);
+    void setSampleSinkDisplayName(const QString& serial);
     void setSampleSinkSequence(int sequence);
-    void setSampleSinkPluginInstanceUI(PluginInstanceUI *gui);
+    void setNbItems(uint32_t nbItems);
+    void setItemIndex(uint32_t index);
+    void setSampleSinkPluginInterface(PluginInterface *iface);
+    void setSampleSinkPluginInstanceUI(PluginInstanceGUI *gui);
 
     const QString& getHardwareId() const { return m_hardwareId; }
     const QString& getSampleSinkId() const { return m_sampleSinkId; }
     const QString& getSampleSinkSerial() const { return m_sampleSinkSerial; }
+    const QString& getSampleSinkDisplayName() const { return m_sampleSinkDisplayName; }
     uint32_t getSampleSinkSequence() const { return m_sampleSinkSequence; }
+    uint32_t getNbItems() const { return m_nbItems; }
+    uint32_t getItemIndex() const { return m_itemIndex; }
+    PluginInterface *getPluginInterface() { return m_pluginInterface; }
+    PluginInstanceGUI *getSampleSinkPluginInstanceGUI() { return m_sampleSinkPluginInstanceUI; }
+    void getDeviceEngineStateStr(QString& state);
+    ChannelSourceAPI *getChanelAPIAt(int index);
+    int getNbChannels() const { return m_channelAPIs.size(); }
 
-    void registerChannelInstance(const QString& channelName, PluginInstanceUI* pluginGUI);
-    void removeChannelInstance(PluginInstanceUI* pluginGUI);
+    void registerChannelInstance(const QString& channelName, PluginInstanceGUI* pluginGUI);
+    void removeChannelInstance(PluginInstanceGUI* pluginGUI);
 
-    void freeAll();
 
     void loadSinkSettings(const Preset* preset);
     void saveSinkSettings(Preset* preset);
-    void loadChannelSettings(const Preset* preset, PluginAPI *pluginAPI);
-    void saveChannelSettings(Preset* preset);
 
-    MainWindow *getMainWindow() { return m_mainWindow; }
     DSPDeviceSinkEngine *getDeviceSinkEngine() { return m_deviceSinkEngine; }
 
     const std::vector<DeviceSourceAPI*>& getSourceBuddies() const { return m_sourceBuddies; }
@@ -101,57 +108,34 @@ public:
     bool isBuddyLeader() const { return m_isBuddyLeader; }
     void setBuddyLeader(bool isBuddyLeader) { m_isBuddyLeader = isBuddyLeader; }
 
+    const QTimer& getMasterTimer() const { return m_masterTimer; } //!< This is the DSPEngine master timer
+
 protected:
-    struct ChannelInstanceRegistration
-    {
-        QString m_channelName;
-        PluginInstanceUI* m_gui;
-
-        ChannelInstanceRegistration() :
-            m_channelName(),
-            m_gui(0)
-        { }
-
-        ChannelInstanceRegistration(const QString& channelName, PluginInstanceUI* pluginGUI) :
-            m_channelName(channelName),
-            m_gui(pluginGUI)
-        { }
-
-        bool operator<(const ChannelInstanceRegistration& other) const;
-    };
-
-    typedef QList<ChannelInstanceRegistration> ChannelInstanceRegistrations;
-
-    DeviceSinkAPI(MainWindow *mainWindow,
-            int deviceTabIndex,
-            DSPDeviceSinkEngine *deviceEngine,
-            GLSpectrum *glSpectrum,
-            ChannelWindow *channelWindow);
-    ~DeviceSinkAPI();
-
-    void renameChannelInstances();
-
-    MainWindow *m_mainWindow;
     int m_deviceTabIndex;
     DSPDeviceSinkEngine *m_deviceSinkEngine;
-    GLSpectrum *m_spectrum;
-    ChannelWindow *m_channelWindow;
 
-    QString m_hardwareId;
-    QString m_sampleSinkId;
-    QString m_sampleSinkSerial;
-    uint32_t m_sampleSinkSequence;
-    PluginInstanceUI* m_sampleSinkPluginInstanceUI;
-
-    ChannelInstanceRegistrations m_channelInstanceRegistrations;
+    QString m_hardwareId;            //!< The internal id that identifies the type of hardware (i.e. HackRF, BladeRF, ...)
+    QString m_sampleSinkId;          //!< The internal plugin ID corresponding to the device (i.e. for HackRF input, for HackRF output ...)
+    QString m_sampleSinkSerial;      //!< The device serial number defined by the vendor
+    QString m_sampleSinkDisplayName; //!< The human readable name identifying this instance
+    uint32_t m_sampleSinkSequence;   //!< The device sequence. >0 when more than one device of the same type is connected
+    uint32_t m_nbItems;              //!< Number of items or streams in the device. Can be >1 for NxM devices (i.e. 2 for LimeSDR)
+    uint32_t m_itemIndex;            //!< The Tx stream index. Can be >0 for NxM devices (i.e. 0 or 1 for LimeSDR)
+    PluginInterface* m_pluginInterface;
+    PluginInstanceGUI* m_sampleSinkPluginInstanceUI;
 
     std::vector<DeviceSourceAPI*> m_sourceBuddies; //!< Device source APIs referencing the same physical device
     std::vector<DeviceSinkAPI*> m_sinkBuddies;     //!< Device sink APIs referencing the same physical device
     void *m_buddySharedPtr;
     bool m_isBuddyLeader;
+    const QTimer& m_masterTimer; //!< This is the DSPEngine master timer
 
-    friend class MainWindow;
+    QList<ChannelSourceAPI*> m_channelAPIs;
+
     friend class DeviceSourceAPI;
+
+private:
+    void renumerateChannels();
 };
 
 

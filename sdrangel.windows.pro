@@ -5,9 +5,14 @@
 #--------------------------------------------------------
 
 TEMPLATE = subdirs
-SUBDIRS = sdrbase
-CONFIG(MINGW64)SUBDIRS += nanomsg
+
+SUBDIRS = serialdv
 SUBDIRS += httpserver
+SUBDIRS += logging
+SUBDIRS += swagger
+SUBDIRS += sdrbase
+SUBDIRS += sdrgui
+CONFIG(MINGW64)SUBDIRS += nanomsg
 SUBDIRS += fcdhid
 SUBDIRS += fcdlib
 SUBDIRS += librtlsdr
@@ -20,7 +25,6 @@ SUBDIRS += libiio
 SUBDIRS += devices
 SUBDIRS += mbelib
 SUBDIRS += dsdcc
-SUBDIRS += serialdv
 CONFIG(MINGW64)SUBDIRS += cm256cc
 SUBDIRS += plugins/samplesource/filesource
 CONFIG(MINGW64)SUBDIRS += plugins/samplesource/sdrdaemonsource
@@ -34,6 +38,7 @@ SUBDIRS += plugins/samplesink/filesink
 SUBDIRS += plugins/samplesink/bladerfoutput
 SUBDIRS += plugins/samplesink/hackrfoutput
 SUBDIRS += plugins/samplesink/limesdroutput
+SUBDIRS += plugins/samplesink/plutosdroutput
 SUBDIRS += plugins/channelrx/chanalyzer
 SUBDIRS += plugins/channelrx/chanalyzerng
 SUBDIRS += plugins/channelrx/demodam

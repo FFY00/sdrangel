@@ -39,6 +39,13 @@ void LimeSDRInputThread::startWork()
 {
     if (m_running) return; // return if running already
 
+    if (LMS_StartStream(m_stream) < 0) {
+        qCritical("LimeSDRInputThread::startWork: could not start stream");
+    } else {
+        usleep(50000);
+        qDebug("LimeSDRInputThread::startWork: stream started");
+    }
+
     m_startWaitMutex.lock();
     start();
     while(!m_running)
@@ -52,6 +59,13 @@ void LimeSDRInputThread::stopWork()
 
     m_running = false;
     wait();
+
+    if (LMS_StopStream(m_stream) < 0) {
+        qCritical("LimeSDRInputThread::stopWork: could not stop stream");
+    } else {
+        usleep(50000);
+        qDebug("LimeSDRInputThread::stopWork: stream stopped");
+    }
 }
 
 void LimeSDRInputThread::setLog2Decimation(unsigned int log2_decim)
@@ -75,12 +89,6 @@ void LimeSDRInputThread::run()
     m_running = true;
     m_startWaiter.wakeAll();
 
-    if (LMS_StartStream(m_stream) < 0) {
-        qCritical("LimeSDRInputThread::run: could not start stream");
-    } else {
-        qDebug("LimeSDRInputThread::run: stream started");
-    }
-
     while (m_running)
     {
         if ((res = LMS_RecvStream(m_stream, (void *) m_buf, LIMESDR_BLOCKSIZE, &metadata, 1000)) < 0)
@@ -90,13 +98,6 @@ void LimeSDRInputThread::run()
         }
 
         callback(m_buf, 2 * res);
-    }
-
-
-    if (LMS_StopStream(m_stream) < 0) {
-        qCritical("LimeSDRInputThread::run: could not stop stream");
-    } else {
-        qDebug("LimeSDRInputThread::run: stream stopped");
     }
 
     m_running = false;

@@ -4,12 +4,14 @@ set(modam_SOURCES
 	ammod.cpp
 	ammodgui.cpp
 	ammodplugin.cpp
+	ammodsettings.cpp
 )
 
 set(modam_HEADERS
 	ammod.h
 	ammodgui.h
 	ammodplugin.h
+	ammodsettings.h
 )
 
 set(modam_FORMS
@@ -36,6 +38,7 @@ add_library(modam SHARED
 target_link_libraries(modam
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(modam Core Widgets)

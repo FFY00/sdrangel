@@ -26,7 +26,7 @@
 #include "plutosdrinput.h"
 #include "plutosdrinputthread.h"
 
-#define PLUTOSDR_BLOCKSIZE_SAMPLES (32*1024) //complex samples per buffer (must be multiple of 64)
+#define PLUTOSDR_BLOCKSIZE_SAMPLES (16*1024) //complex samples per buffer (must be multiple of 64)
 
 MESSAGE_CLASS_DEFINITION(PlutoSDRInput::MsgConfigurePlutoSDR, Message)
 MESSAGE_CLASS_DEFINITION(PlutoSDRInput::MsgFileRecord, Message)
@@ -34,7 +34,7 @@ MESSAGE_CLASS_DEFINITION(PlutoSDRInput::MsgFileRecord, Message)
 PlutoSDRInput::PlutoSDRInput(DeviceSourceAPI *deviceAPI) :
     m_deviceAPI(deviceAPI),
     m_fileSink(0),
-    m_deviceDescription("PlutoSDR"),
+    m_deviceDescription("PlutoSDRInput"),
     m_running(false),
     m_plutoRxBuffer(0),
     m_plutoSDRInputThread(0)
@@ -56,6 +56,11 @@ PlutoSDRInput::~PlutoSDRInput()
     suspendBuddies();
     closeDevice();
     resumeBuddies();
+}
+
+void PlutoSDRInput::destroy()
+{
+    delete this;
 }
 
 bool PlutoSDRInput::start()
@@ -145,6 +150,19 @@ bool PlutoSDRInput::handleMessage(const Message& message)
 
         return true;
     }
+    else if (DevicePlutoSDRShared::MsgCrossReportToBuddy::match(message)) // message from buddy
+    {
+        DevicePlutoSDRShared::MsgCrossReportToBuddy& conf = (DevicePlutoSDRShared::MsgCrossReportToBuddy&) message;
+        m_settings.m_devSampleRate = conf.getDevSampleRate();
+        m_settings.m_lpfFIRlog2Decim = conf.getLpfFiRlog2IntDec();
+        m_settings.m_lpfFIRBW = conf.getLpfFirbw();
+        m_settings.m_LOppmTenths = conf.getLoPPMTenths();
+        PlutoSDRInputSettings newSettings = m_settings;
+        newSettings.m_lpfFIREnable = conf.isLpfFirEnable();
+        applySettings(newSettings);
+
+        return true;
+    }
     else
     {
         return false;
@@ -196,9 +214,11 @@ bool PlutoSDRInput::openDevice()
     m_deviceAPI->setBuddySharedPtr(&m_deviceShared); // propagate common parameters to API
 
     // acquire the channel
+    suspendBuddies();
     DevicePlutoSDRBox *plutoBox =  m_deviceShared.m_deviceParams->getBox();
     plutoBox->openRx();
-    m_plutoRxBuffer = plutoBox->createRxBuffer(PLUTOSDR_BLOCKSIZE_SAMPLES*2, false); // PlutoSDR buffer size is counted in number of I or Q samples not the combination
+    m_plutoRxBuffer = plutoBox->createRxBuffer(PLUTOSDR_BLOCKSIZE_SAMPLES, false);
+    resumeBuddies();
 
     return true;
 }
@@ -349,28 +369,68 @@ bool PlutoSDRInput::applySettings(const PlutoSDRInputSettings& settings, bool fo
         forwardChangeOwnDSP = true;
     }
 
-    if ((m_settings.m_fcPos != settings.m_fcPos) || force)
-    {
-        if (m_plutoSDRInputThread != 0)
-        {
-            m_plutoSDRInputThread->setFcPos(settings.m_fcPos);
-            qDebug() << "PlutoSDRInput::applySettings: set fcPos to " << (1<<settings.m_fcPos);
-        }
-    }
-
     if ((m_settings.m_LOppmTenths != settings.m_LOppmTenths) || force)
     {
         plutoBox->setLOPPMTenths(settings.m_LOppmTenths);
+        forwardChangeOtherDSP = true;
     }
 
     std::vector<std::string> params;
     bool paramsToSet = false;
 
-    if ((m_settings.m_centerFrequency != settings.m_centerFrequency) || force)
+    if (force || (m_settings.m_centerFrequency != settings.m_centerFrequency)
+            || (m_settings.m_fcPos != settings.m_fcPos)
+            || (m_settings.m_transverterMode != settings.m_transverterMode)
+            || (m_settings.m_transverterDeltaFrequency != settings.m_transverterDeltaFrequency))
     {
-        params.push_back(QString(tr("out_altvoltage0_RX_LO_frequency=%1").arg(settings.m_centerFrequency)).toStdString());
-        paramsToSet = true;
-        forwardChangeOwnDSP = true;
+        qint64 deviceCenterFrequency = settings.m_centerFrequency;
+        deviceCenterFrequency -= settings.m_transverterMode ? settings.m_transverterDeltaFrequency : 0;
+        qint64 f_img = deviceCenterFrequency;
+        quint32 devSampleRate = settings.m_devSampleRate;
+
+        if ((m_settings.m_log2Decim == 0) || (settings.m_fcPos == PlutoSDRInputSettings::FC_POS_CENTER))
+        {
+            f_img = deviceCenterFrequency;
+        }
+        else
+        {
+            if (settings.m_fcPos == PlutoSDRInputSettings::FC_POS_INFRA)
+            {
+                deviceCenterFrequency += (devSampleRate / 4);
+                f_img = deviceCenterFrequency + devSampleRate/2;
+            }
+            else if (settings.m_fcPos == PlutoSDRInputSettings::FC_POS_SUPRA)
+            {
+                deviceCenterFrequency -= (devSampleRate / 4);
+                f_img = deviceCenterFrequency - devSampleRate/2;
+            }
+        }
+
+        deviceCenterFrequency = deviceCenterFrequency < 0 ? 0 : deviceCenterFrequency;
+
+        if (force || (m_settings.m_centerFrequency != settings.m_centerFrequency)
+                || (m_settings.m_transverterMode != settings.m_transverterMode)
+                || (m_settings.m_transverterDeltaFrequency != settings.m_transverterDeltaFrequency))
+        {
+            params.push_back(QString(tr("out_altvoltage0_RX_LO_frequency=%1").arg(deviceCenterFrequency)).toStdString());
+            paramsToSet = true;
+            forwardChangeOwnDSP = true;
+        }
+
+        if ((m_settings.m_fcPos != settings.m_fcPos) || force)
+        {
+            if (m_plutoSDRInputThread != 0)
+            {
+                m_plutoSDRInputThread->setFcPos(settings.m_fcPos);
+                qDebug() << "PlutoSDRInput::applySettings: set fcPos to " << settings.m_fcPos;
+            }
+        }
+
+        qDebug() << "PlutoSDRInput::applySettings: center freq: " << settings.m_centerFrequency << " Hz"
+                << " device center freq: " << deviceCenterFrequency << " Hz"
+                << " device sample rate: " << devSampleRate << "S/s"
+                << " Actual sample rate: " << devSampleRate/(1<<settings.m_log2Decim) << "S/s"
+                << " img: " << f_img << "Hz";
     }
 
     if ((m_settings.m_lpfBW != settings.m_lpfBW) || force)
@@ -433,7 +493,29 @@ bool PlutoSDRInput::applySettings(const PlutoSDRInputSettings& settings, bool fo
     // TODO: forward changes to other (Tx) DSP
     if (forwardChangeOtherDSP)
     {
+
         qDebug("PlutoSDRInput::applySettings: forwardChangeOtherDSP");
+
+        const std::vector<DeviceSinkAPI*>& sinkBuddies = m_deviceAPI->getSinkBuddies();
+        std::vector<DeviceSinkAPI*>::const_iterator itSink = sinkBuddies.begin();
+
+        for (; itSink != sinkBuddies.end(); ++itSink)
+        {
+            DevicePlutoSDRShared::MsgCrossReportToBuddy *msg = DevicePlutoSDRShared::MsgCrossReportToBuddy::create(
+                    settings.m_devSampleRate,
+                    settings.m_lpfFIREnable,
+                    settings.m_lpfFIRlog2Decim,
+                    settings.m_lpfFIRBW,
+                    settings.m_LOppmTenths);
+
+            if ((*itSink)->getSampleSinkGUIMessageQueue())
+            {
+                DevicePlutoSDRShared::MsgCrossReportToBuddy *msgToGUI = new DevicePlutoSDRShared::MsgCrossReportToBuddy(*msg);
+                (*itSink)->getSampleSinkGUIMessageQueue()->push(msgToGUI);
+            }
+
+            (*itSink)->getSampleSinkInputMessageQueue()->push(msg);
+        }
     }
 
     if (forwardChangeOwnDSP)
@@ -443,7 +525,7 @@ bool PlutoSDRInput::applySettings(const PlutoSDRInputSettings& settings, bool fo
         int sampleRate = m_settings.m_devSampleRate/(1<<m_settings.m_log2Decim);
         DSPSignalNotification *notif = new DSPSignalNotification(sampleRate, m_settings.m_centerFrequency);
         m_fileSink->handleMessage(*notif); // forward to file sink
-        m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+        m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
     }
 
     return true;
@@ -453,8 +535,17 @@ void PlutoSDRInput::getRSSI(std::string& rssiStr)
 {
     DevicePlutoSDRBox *plutoBox =  m_deviceShared.m_deviceParams->getBox();
 
-    if (!plutoBox->getRSSI(rssiStr, 0)) {
+    if (!plutoBox->getRxRSSI(rssiStr, 0)) {
         rssiStr = "xxx dB";
+    }
+}
+
+void PlutoSDRInput::getGain(int& gaindB)
+{
+    DevicePlutoSDRBox *plutoBox =  m_deviceShared.m_deviceParams->getBox();
+
+    if (!plutoBox->getRxGain(gaindB, 0)) {
+        gaindB = 0;
     }
 }
 

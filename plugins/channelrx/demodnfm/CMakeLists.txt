@@ -3,12 +3,14 @@ project(nfm)
 set(nfm_SOURCES
 	nfmdemod.cpp
 	nfmdemodgui.cpp
+	nfmdemodsettings.cpp
 	nfmplugin.cpp
 )
 
 set(nfm_HEADERS
 	nfmdemod.h
 	nfmdemodgui.h
+	nfmdemodsettings.h
 	nfmplugin.h
 )
 
@@ -38,6 +40,7 @@ add_library(demodnfm SHARED
 target_link_libraries(demodnfm
 	${QT_LIBRARIES}
 	sdrbase
+	sdrgui
 )
 
 qt5_use_modules(demodnfm Core Widgets)

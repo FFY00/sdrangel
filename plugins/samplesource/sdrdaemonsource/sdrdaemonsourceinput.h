@@ -303,8 +303,9 @@ public:
         { }
     };
 
-	SDRdaemonSourceInput(const QTimer& masterTimer, DeviceSourceAPI *deviceAPI);
+	SDRdaemonSourceInput(DeviceSourceAPI *deviceAPI);
 	virtual ~SDRdaemonSourceInput();
+	virtual void destroy();
 
 	virtual bool start();
 	virtual void stop();
@@ -317,15 +318,16 @@ public:
 
 	virtual bool handleMessage(const Message& message);
 
+	virtual void setMessageQueueToGUI(MessageQueue *queue);
+
 private:
 	DeviceSourceAPI *m_deviceAPI;
 	QMutex m_mutex;
+	SDRdaemonSourceSettings m_settings;
 	QString m_address;
 	quint16 m_port;
 	SDRdaemonSourceUDPHandler* m_SDRdaemonUDPHandler;
 	QString m_deviceDescription;
-	int m_sampleRate;
-	quint64 m_centerFrequency;
 	std::time_t m_startingTimeStamp;
 	const QTimer& m_masterTimer;
     bool m_autoFollowRate;

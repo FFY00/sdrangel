@@ -17,26 +17,28 @@
 #ifndef INCLUDE_SDRDAEMONSOURCEGUI_H
 #define INCLUDE_SDRDAEMONSOURCEGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QWidget>
-
 #include <sys/time.h>
+
+#include "util/messagequeue.h"
+
 #include "sdrdaemonsourceinput.h"
 
-class DeviceSourceAPI;
+class DeviceUISet;
 
 namespace Ui {
 	class SDRdaemonSourceGui;
 }
 
-class SDRdaemonSourceGui : public QWidget, public PluginInstanceUI {
+class SDRdaemonSourceGui : public QWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
-	explicit SDRdaemonSourceGui(DeviceSourceAPI *deviceAPI, QWidget* parent = NULL);
+	explicit SDRdaemonSourceGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
 	virtual ~SDRdaemonSourceGui();
-	void destroy();
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -46,12 +48,13 @@ public:
 	bool deserialize(const QByteArray& data);
 	virtual qint64 getCenterFrequency() const;
 	virtual void setCenterFrequency(qint64 centerFrequency);
+	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::SDRdaemonSourceGui* ui;
 
-	DeviceSourceAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
     SDRdaemonSourceSettings m_settings;        //!< current settings
     SDRdaemonSourceSettings m_controlSettings; //!< settings last sent to device via control port
 	QTimer m_updateTimer;
@@ -61,6 +64,7 @@ private:
     int m_deviceSampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
     int m_lastEngineState;
+    MessageQueue m_inputMessageQueue;
 
 	int m_sampleRate;
 	quint64 m_centerFrequency;
@@ -120,8 +124,7 @@ private:
     void displayEventTimer();
 
 private slots:
-    void handleDSPMessages();
-	void handleSourceMessages();
+    void handleInputMessages();
 	void on_applyButton_clicked(bool checked);
 	void on_dcOffset_toggled(bool checked);
 	void on_iqImbalance_toggled(bool checked);

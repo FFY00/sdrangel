@@ -65,7 +65,11 @@ PluginInterface::SamplingDevices FCDProPlugin::enumSampleSources()
 		        fcd_traits<Pro>::hardwareID,
 		        fcd_traits<Pro>::interfaceIID,
 				serialNumber,
-				i));
+				i,
+				PluginInterface::SamplingDevice::PhysicalDevice,
+				true,
+				1,
+				0));
 
 		device_info = device_info->next;
 		i++;
@@ -74,16 +78,32 @@ PluginInterface::SamplingDevices FCDProPlugin::enumSampleSources()
 	return result;
 }
 
-PluginInstanceUI* FCDProPlugin::createSampleSourcePluginInstanceUI(const QString& sourceId, QWidget **widget, DeviceSourceAPI *deviceAPI)
+PluginInstanceGUI* FCDProPlugin::createSampleSourcePluginInstanceGUI(
+        const QString& sourceId,
+        QWidget **widget,
+        DeviceUISet *deviceUISet)
 {
 	if(sourceId == fcd_traits<Pro>::interfaceIID)
 	{
-		FCDProGui* gui = new FCDProGui(deviceAPI);
+		FCDProGui* gui = new FCDProGui(deviceUISet);
 		*widget = gui;
 		return gui;
 	}
 	else
 	{
-		return NULL;
+		return 0;
 	}
+}
+
+DeviceSampleSource *FCDProPlugin::createSampleSourcePluginInstanceInput(const QString& sourceId, DeviceSourceAPI *deviceAPI)
+{
+    if (sourceId == fcd_traits<Pro>::interfaceIID)
+    {
+        FCDProInput* input = new FCDProInput(deviceAPI);
+        return input;
+    }
+    else
+    {
+        return 0;
+    }
 }

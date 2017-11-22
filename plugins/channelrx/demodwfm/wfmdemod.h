@@ -18,9 +18,11 @@
 #ifndef INCLUDE_WFMDEMOD_H
 #define INCLUDE_WFMDEMOD_H
 
-#include <dsp/basebandsamplesink.h>
 #include <QMutex>
 #include <vector>
+
+#include "dsp/basebandsamplesink.h"
+#include "channel/channelsinkapi.h"
 #include "dsp/nco.h"
 #include "dsp/interpolator.h"
 #include "dsp/lowpass.h"
@@ -30,25 +32,74 @@
 #include "audio/audiofifo.h"
 #include "util/message.h"
 
+#include "wfmdemodsettings.h"
+
 #define rfFilterFftLength 1024
 
-class WFMDemod : public BasebandSampleSink {
-public:
-	WFMDemod(BasebandSampleSink* sampleSink);
-	virtual ~WFMDemod();
+class ThreadedBasebandSampleSink;
+class DownChannelizer;
+class DeviceSourceAPI;
 
-	void configure(
-	        MessageQueue* messageQueue,
-	        Real rfBandwidth,
-	        Real afBandwidth,
-	        Real volume,
-	        Real squelch,
-	        bool auduiMute);
+class WFMDemod : public BasebandSampleSink, public ChannelSinkAPI {
+public:
+    class MsgConfigureWFMDemod : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        const WFMDemodSettings& getSettings() const { return m_settings; }
+        bool getForce() const { return m_force; }
+
+        static MsgConfigureWFMDemod* create(const WFMDemodSettings& settings, bool force)
+        {
+            return new MsgConfigureWFMDemod(settings, force);
+        }
+
+    private:
+        WFMDemodSettings m_settings;
+        bool m_force;
+
+        MsgConfigureWFMDemod(const WFMDemodSettings& settings, bool force) :
+            Message(),
+            m_settings(settings),
+            m_force(force)
+        { }
+    };
+
+    class MsgConfigureChannelizer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int getSampleRate() const { return m_sampleRate; }
+        int getCenterFrequency() const { return m_centerFrequency; }
+
+        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
+        {
+            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
+        }
+
+    private:
+        int m_sampleRate;
+        int m_centerFrequency;
+
+        MsgConfigureChannelizer(int sampleRate, int centerFrequency) :
+            Message(),
+            m_sampleRate(sampleRate),
+            m_centerFrequency(centerFrequency)
+        { }
+    };
+
+	WFMDemod(DeviceSourceAPI *deviceAPI);
+	virtual ~WFMDemod();
+	void setSampleSink(BasebandSampleSink* sampleSink) { m_sampleSink = sampleSink; }
 
 	virtual void feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool po);
 	virtual void start();
 	virtual void stop();
 	virtual bool handleMessage(const Message& cmd);
+
+    virtual int getDeltaFrequency() const { return m_absoluteFrequencyOffset; }
+    virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual void getTitle(QString& title) { title = m_settings.m_title; }
 
 	double getMagSq() const { return m_movingAverage.average(); }
     bool getSquelchOpen() const { return m_squelchOpen; }
@@ -64,68 +115,20 @@ public:
         m_magsqCount = 0;
     }
 
+    static const QString m_channelID;
+
 private:
-	class MsgConfigureWFMDemod : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		Real getRFBandwidth() const { return m_rfBandwidth; }
-		Real getAFBandwidth() const { return m_afBandwidth; }
-		Real getVolume() const { return m_volume; }
-		Real getSquelch() const { return m_squelch; }
-        bool getAudioMute() const { return m_audioMute; }
-
-		static MsgConfigureWFMDemod* create(Real rfBandwidth, Real afBandwidth, Real volume, Real squelch, bool audioMute)
-		{
-			return new MsgConfigureWFMDemod(rfBandwidth, afBandwidth, volume, squelch, audioMute);
-		}
-
-	private:
-		Real m_rfBandwidth;
-		Real m_afBandwidth;
-		Real m_volume;
-		Real m_squelch;
-		bool m_audioMute;
-
-		MsgConfigureWFMDemod(Real rfBandwidth, Real afBandwidth, Real volume, Real squelch, bool audioMute) :
-			Message(),
-			m_rfBandwidth(rfBandwidth),
-			m_afBandwidth(afBandwidth),
-			m_volume(volume),
-			m_squelch(squelch),
-			m_audioMute(audioMute)
-		{ }
-	};
-
 	enum RateState {
 		RSInitialFill,
 		RSRunning
 	};
 
-	struct Config {
-		int m_inputSampleRate;
-		qint64 m_inputFrequencyOffset;
-		Real m_rfBandwidth;
-		Real m_afBandwidth;
-		Real m_squelch;
-		Real m_volume;
-		quint32 m_audioSampleRate;
-		bool m_audioMute;
+    DeviceSourceAPI* m_deviceAPI;
+    ThreadedBasebandSampleSink* m_threadedChannelizer;
+    DownChannelizer* m_channelizer;
 
-		Config() :
-			m_inputSampleRate(-1),
-			m_inputFrequencyOffset(0),
-			m_rfBandwidth(-1),
-			m_afBandwidth(-1),
-			m_squelch(0),
-			m_volume(0),
-			m_audioSampleRate(0),
-			m_audioMute(false)
-		{ }
-	};
-
-	Config m_config;
-	Config m_running;
+    WFMDemodSettings m_settings;
+    int m_absoluteFrequencyOffset;
 
 	NCO m_nco;
 	Interpolator m_interpolator; //!< Interpolator between sample rate sent from DSP engine and requested RF bandwidth (rational)
@@ -155,7 +158,7 @@ private:
 
 	PhaseDiscriminators m_phaseDiscri;
 
-	void apply();
+	void applySettings(const WFMDemodSettings& settings, bool force = false);
 };
 
 #endif // INCLUDE_WFMDEMOD_H

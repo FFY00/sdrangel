@@ -25,20 +25,21 @@
 #include "dsp/dspengine.h"
 #include "dsp/dspcommands.h"
 #include "device/devicesinkapi.h"
+#include "device/deviceuiset.h"
 #include "bladerfoutputgui.h"
 #include "bladerf/devicebladerfvalues.h"
 
-BladerfOutputGui::BladerfOutputGui(DeviceSinkAPI *deviceAPI, QWidget* parent) :
+BladerfOutputGui::BladerfOutputGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	QWidget(parent),
 	ui(new Ui::BladerfOutputGui),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
+	m_forceSettings(true),
 	m_settings(),
 	m_deviceSampleSink(NULL),
 	m_sampleRate(0),
 	m_lastEngineState((DSPDeviceSinkEngine::State)-1)
 {
-    m_deviceSampleSink = new BladerfOutput(m_deviceAPI);
-    m_deviceAPI->setSink(m_deviceSampleSink);
+    m_deviceSampleSink = (BladerfOutput*) m_deviceUISet->m_deviceSinkAPI->getSampleSink();
 
 	ui->setupUi(this);
 	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
@@ -61,14 +62,13 @@ BladerfOutputGui::BladerfOutputGui(DeviceSinkAPI *deviceAPI, QWidget* parent) :
 	displaySettings();
 
 	char recFileNameCStr[30];
-	sprintf(recFileNameCStr, "test_%d.sdriq", m_deviceAPI->getDeviceUID());
+	sprintf(recFileNameCStr, "test_%d.sdriq", m_deviceUISet->m_deviceSinkAPI->getDeviceUID());
 
-    connect(m_deviceAPI->getDeviceOutputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleDSPMessages()), Qt::QueuedConnection);
+	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 }
 
 BladerfOutputGui::~BladerfOutputGui()
 {
-	delete m_deviceSampleSink; // Valgrind memcheck
 	delete ui;
 }
 
@@ -115,6 +115,7 @@ bool BladerfOutputGui::deserialize(const QByteArray& data)
 {
 	if(m_settings.deserialize(data)) {
 		displaySettings();
+		m_forceSettings = true;
 		sendSettings();
 		return true;
 	} else {
@@ -136,31 +137,38 @@ bool BladerfOutputGui::handleMessage(const Message& message)
 	}
 }
 
-void BladerfOutputGui::handleDSPMessages()
+void BladerfOutputGui::handleInputMessages()
 {
     Message* message;
 
-    while ((message = m_deviceAPI->getDeviceOutputMessageQueue()->pop()) != 0)
+    while ((message = m_inputMessageQueue.pop()) != 0)
     {
-        qDebug("BladerfOutputGui::handleDSPMessages: message: %s", message->getIdentifier());
+        qDebug("BladerfOutputGui::handleInputMessages: message: %s", message->getIdentifier());
 
         if (DSPSignalNotification::match(*message))
         {
             DSPSignalNotification* notif = (DSPSignalNotification*) message;
             m_sampleRate = notif->getSampleRate();
             m_deviceCenterFrequency = notif->getCenterFrequency();
-            qDebug("BladerfOutputGui::handleDSPMessages: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
+            qDebug("BladerfOutputGui::handleInputMessages: DSPSignalNotification: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
             updateSampleRateAndFrequency();
 
             delete message;
+        }
+        else
+        {
+            if (handleMessage(*message))
+            {
+                delete message;
+            }
         }
     }
 }
 
 void BladerfOutputGui::updateSampleRateAndFrequency()
 {
-    m_deviceAPI->getSpectrum()->setSampleRate(m_sampleRate);
-    m_deviceAPI->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
+    m_deviceUISet->getSpectrum()->setSampleRate(m_sampleRate);
+    m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
     ui->deviceRateLabel->setText(QString("%1k").arg(QString::number(m_sampleRate/1000.0, 'g', 5)));
 }
 
@@ -300,15 +308,15 @@ void BladerfOutputGui::on_startStop_toggled(bool checked)
 {
     if (checked)
     {
-        if (m_deviceAPI->initGeneration())
+        if (m_deviceUISet->m_deviceSinkAPI->initGeneration())
         {
-            m_deviceAPI->startGeneration();
+            m_deviceUISet->m_deviceSinkAPI->startGeneration();
             DSPEngine::instance()->startAudioInput();
         }
     }
     else
     {
-        m_deviceAPI->stopGeneration();
+        m_deviceUISet->m_deviceSinkAPI->stopGeneration();
         DSPEngine::instance()->stopAudioInput();
     }
 }
@@ -316,14 +324,15 @@ void BladerfOutputGui::on_startStop_toggled(bool checked)
 void BladerfOutputGui::updateHardware()
 {
 	qDebug() << "BladerfGui::updateHardware";
-	BladerfOutput::MsgConfigureBladerf* message = BladerfOutput::MsgConfigureBladerf::create( m_settings);
+	BladerfOutput::MsgConfigureBladerf* message = BladerfOutput::MsgConfigureBladerf::create( m_settings, m_forceSettings);
 	m_deviceSampleSink->getInputMessageQueue()->push(message);
+	m_forceSettings = false;
 	m_updateTimer.stop();
 }
 
 void BladerfOutputGui::updateStatus()
 {
-    int state = m_deviceAPI->state();
+    int state = m_deviceUISet->m_deviceSinkAPI->state();
 
     if(m_lastEngineState != state)
     {
@@ -340,7 +349,7 @@ void BladerfOutputGui::updateStatus()
                 break;
             case DSPDeviceSinkEngine::StError:
                 ui->startStop->setStyleSheet("QToolButton { background-color : red; }");
-                QMessageBox::information(this, tr("Message"), m_deviceAPI->errorMessage());
+                QMessageBox::information(this, tr("Message"), m_deviceUISet->m_deviceSinkAPI->errorMessage());
                 break;
             default:
                 break;

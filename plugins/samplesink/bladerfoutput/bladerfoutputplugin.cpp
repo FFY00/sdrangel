@@ -26,7 +26,7 @@
 
 const PluginDescriptor BladerfOutputPlugin::m_pluginDescriptor = {
 	QString("BladerRF Output"),
-	QString("3.5.5"),
+	QString("3.8.0"),
 	QString("(c) Edouard Griffiths, F4EXB"),
 	QString("https://github.com/f4exb/sdrangel"),
 	true,
@@ -66,7 +66,11 @@ PluginInterface::SamplingDevices BladerfOutputPlugin::enumSampleSinks()
 		        m_hardwareID,
 				m_deviceTypeID,
 				QString(devinfo[i].serial),
-				i));
+				i,
+				PluginInterface::SamplingDevice::PhysicalDevice,
+				false,
+				1,
+				0));
 	}
 
 	if (devinfo)
@@ -77,11 +81,14 @@ PluginInterface::SamplingDevices BladerfOutputPlugin::enumSampleSinks()
 	return result;
 }
 
-PluginInstanceUI* BladerfOutputPlugin::createSampleSinkPluginInstanceUI(const QString& sinkId,QWidget **widget, DeviceSinkAPI *deviceAPI)
+PluginInstanceGUI* BladerfOutputPlugin::createSampleSinkPluginInstanceGUI(
+        const QString& sinkId,
+        QWidget **widget,
+        DeviceUISet *deviceUISet)
 {
 	if(sinkId == m_deviceTypeID)
 	{
-		BladerfOutputGui* gui = new BladerfOutputGui(deviceAPI);
+		BladerfOutputGui* gui = new BladerfOutputGui(deviceUISet);
 		*widget = gui;
 		return gui;
 	}
@@ -89,4 +96,18 @@ PluginInstanceUI* BladerfOutputPlugin::createSampleSinkPluginInstanceUI(const QS
 	{
 		return 0;
 	}
+}
+
+DeviceSampleSink* BladerfOutputPlugin::createSampleSinkPluginInstanceOutput(const QString& sinkId, DeviceSinkAPI *deviceAPI)
+{
+    if(sinkId == m_deviceTypeID)
+    {
+        BladerfOutput* output = new BladerfOutput(deviceAPI);
+        return output;
+    }
+    else
+    {
+        return 0;
+    }
+
 }

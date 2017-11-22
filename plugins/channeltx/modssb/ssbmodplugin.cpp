@@ -19,11 +19,12 @@
 #include "plugin/pluginapi.h"
 
 #include "ssbmodgui.h"
+#include "ssbmod.h"
 #include "ssbmodplugin.h"
 
 const PluginDescriptor SSBModPlugin::m_pluginDescriptor = {
     QString("SSB Modulator"),
-    QString("3.5.4"),
+    QString("3.8.4"),
     QString("(c) Edouard Griffiths, F4EXB"),
     QString("https://github.com/f4exb/sdrangel"),
     true,
@@ -46,21 +47,27 @@ void SSBModPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI = pluginAPI;
 
 	// register SSB modulator
-	m_pluginAPI->registerTxChannel(SSBModGUI::m_channelID, this);
+    m_pluginAPI->registerTxChannel(SSBMod::m_channelID, this);
 }
 
-PluginInstanceUI* SSBModPlugin::createTxChannel(const QString& channelName, DeviceSinkAPI *deviceAPI)
+PluginInstanceGUI* SSBModPlugin::createTxChannelGUI(const QString& channelName, DeviceUISet *deviceUISet, BasebandSampleSource *txChannel)
 {
-	if(channelName == SSBModGUI::m_channelID)
+    if(channelName == SSBMod::m_channelID)
 	{
-	    SSBModGUI* gui = SSBModGUI::create(m_pluginAPI, deviceAPI);
+	    SSBModGUI* gui = SSBModGUI::create(m_pluginAPI, deviceUISet, txChannel);
 		return gui;
 	} else {
 		return 0;
 	}
 }
 
-void SSBModPlugin::createInstanceModSSB(DeviceSinkAPI *deviceAPI)
+BasebandSampleSource* SSBModPlugin::createTxChannel(const QString& channelName, DeviceSinkAPI *deviceAPI)
 {
-    SSBModGUI::create(m_pluginAPI, deviceAPI);
+    if(channelName == SSBMod::m_channelID)
+    {
+        SSBMod* source = new SSBMod(deviceAPI);
+        return source;
+    } else {
+        return 0;
+    }
 }

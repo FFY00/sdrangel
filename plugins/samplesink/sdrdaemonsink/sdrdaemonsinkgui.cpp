@@ -38,12 +38,13 @@
 #include "mainwindow.h"
 
 #include "device/devicesinkapi.h"
+#include "device/deviceuiset.h"
 #include "sdrdaemonsinkgui.h"
 
-SDRdaemonSinkGui::SDRdaemonSinkGui(DeviceSinkAPI *deviceAPI, QWidget* parent) :
+SDRdaemonSinkGui::SDRdaemonSinkGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	QWidget(parent),
 	ui(new Ui::SDRdaemonSinkGui),
-	m_deviceAPI(deviceAPI),
+	m_deviceUISet(deviceUISet),
 	m_settings(),
 	m_deviceSampleSink(0),
 	m_sampleRate(0),
@@ -78,16 +79,14 @@ SDRdaemonSinkGui::SDRdaemonSinkGui(DeviceSinkAPI *deviceAPI, QWidget* parent) :
     ui->sampleRate->setColorMapper(ColorMapper(ColorMapper::GrayGreenYellow));
     ui->sampleRate->setValueRange(7, 32000U, 9000000U);
 
-	connect(&(m_deviceAPI->getMainWindow()->getMasterTimer()), SIGNAL(timeout()), this, SLOT(tick()));
+	connect(&(m_deviceUISet->m_deviceSinkAPI->getMasterTimer()), SIGNAL(timeout()), this, SLOT(tick()));
 	connect(&m_updateTimer, SIGNAL(timeout()), this, SLOT(updateHardware()));
 	connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
 	m_statusTimer.start(500);
 
-	m_deviceSampleSink = new SDRdaemonSinkOutput(m_deviceAPI, m_deviceAPI->getMainWindow()->getMasterTimer());
-    connect(m_deviceSampleSink->getOutputMessageQueueToGUI(), SIGNAL(messageEnqueued()), this, SLOT(handleSinkMessages()));
-	m_deviceAPI->setSink(m_deviceSampleSink);
+	m_deviceSampleSink = (SDRdaemonSinkOutput*) m_deviceUISet->m_deviceSinkAPI->getSampleSink();
 
-    connect(m_deviceAPI->getDeviceOutputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleDSPMessages()), Qt::QueuedConnection);
+	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 
     m_time.start();
     displayEventCounts();
@@ -184,46 +183,37 @@ bool SDRdaemonSinkGui::handleMessage(const Message& message)
 	}
 }
 
-void SDRdaemonSinkGui::handleDSPMessages()
+void SDRdaemonSinkGui::handleInputMessages()
 {
     Message* message;
 
-    while ((message = m_deviceAPI->getDeviceOutputMessageQueue()->pop()) != 0)
+    while ((message = m_inputMessageQueue.pop()) != 0)
     {
-        qDebug("SDRdaemonSinkGui::handleDSPMessages: message: %s", message->getIdentifier());
+        qDebug("SDRdaemonSinkGui::handleInputMessages: message: %s", message->getIdentifier());
 
         if (DSPSignalNotification::match(*message))
         {
             DSPSignalNotification* notif = (DSPSignalNotification*) message;
-            qDebug("SDRdaemonSinkGui::handleDSPMessages: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
+            qDebug("SDRdaemonSinkGui::handleInputMessages: DSPSignalNotification: SampleRate:%d, CenterFrequency:%llu", notif->getSampleRate(), notif->getCenterFrequency());
             m_sampleRate = notif->getSampleRate();
             m_deviceCenterFrequency = notif->getCenterFrequency();
             updateSampleRateAndFrequency();
 
             delete message;
         }
-    }
-}
-
-void SDRdaemonSinkGui::handleSinkMessages()
-{
-    Message* message;
-
-    while ((message = m_deviceSampleSink->getOutputMessageQueueToGUI()->pop()) != 0)
-    {
-        //qDebug("FileSourceGui::handleSourceMessages: message: %s", message->getIdentifier());
-
-        if (handleMessage(*message))
+        else
         {
-            delete message;
+            if (handleMessage(*message)) {
+                delete message;
+            }
         }
     }
 }
 
 void SDRdaemonSinkGui::updateSampleRateAndFrequency()
 {
-    m_deviceAPI->getSpectrum()->setSampleRate(m_sampleRate);
-    m_deviceAPI->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
+    m_deviceUISet->getSpectrum()->setSampleRate(m_sampleRate);
+    m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
     ui->deviceRateText->setText(tr("%1k").arg((float)(m_sampleRate*(1<<m_settings.m_log2Interp)) / 1000));
 }
 
@@ -361,7 +351,7 @@ void SDRdaemonSinkGui::updateHardware()
 
 void SDRdaemonSinkGui::updateStatus()
 {
-    int state = m_deviceAPI->state();
+    int state = m_deviceUISet->m_deviceSinkAPI->state();
 
     if(m_lastEngineState != state)
     {
@@ -378,7 +368,7 @@ void SDRdaemonSinkGui::updateStatus()
                 break;
             case DSPDeviceSinkEngine::StError:
                 ui->startStop->setStyleSheet("QToolButton { background-color : red; }");
-                QMessageBox::information(this, tr("Message"), m_deviceAPI->errorMessage());
+                QMessageBox::information(this, tr("Message"), m_deviceUISet->m_deviceSinkAPI->errorMessage());
                 break;
             default:
                 break;
@@ -511,9 +501,9 @@ void SDRdaemonSinkGui::on_startStop_toggled(bool checked)
 {
     if (checked)
     {
-        if (m_deviceAPI->initGeneration())
+        if (m_deviceUISet->m_deviceSinkAPI->initGeneration())
         {
-            if (!m_deviceAPI->startGeneration())
+            if (!m_deviceUISet->m_deviceSinkAPI->startGeneration())
             {
                 qDebug("SDRdaemonSinkGui::on_startStop_toggled: device start failed");
             }
@@ -523,7 +513,7 @@ void SDRdaemonSinkGui::on_startStop_toggled(bool checked)
     }
     else
     {
-        m_deviceAPI->stopGeneration();
+        m_deviceUISet->m_deviceSinkAPI->stopGeneration();
         DSPEngine::instance()->stopAudioInput();
     }
 }

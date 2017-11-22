@@ -36,38 +36,21 @@ public:
 
     public:
         const LimeSDROutputSettings& getSettings() const { return m_settings; }
+        bool getForce() const { return m_force; }
 
-        static MsgConfigureLimeSDR* create(const LimeSDROutputSettings& settings)
+        static MsgConfigureLimeSDR* create(const LimeSDROutputSettings& settings, bool force)
         {
-            return new MsgConfigureLimeSDR(settings);
+            return new MsgConfigureLimeSDR(settings, force);
         }
 
     private:
         LimeSDROutputSettings m_settings;
+        bool m_force;
 
-        MsgConfigureLimeSDR(const LimeSDROutputSettings& settings) :
+        MsgConfigureLimeSDR(const LimeSDROutputSettings& settings, bool force) :
             Message(),
-            m_settings(settings)
-        { }
-    };
-
-    class MsgSetReferenceConfig : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        const LimeSDROutputSettings& getSettings() const { return m_settings; }
-
-        static MsgSetReferenceConfig* create(const LimeSDROutputSettings& settings)
-        {
-            return new MsgSetReferenceConfig(settings);
-        }
-
-    private:
-        LimeSDROutputSettings m_settings;
-
-        MsgSetReferenceConfig(const LimeSDROutputSettings& settings) :
-            Message(),
-            m_settings(settings)
+            m_settings(settings),
+            m_force(force)
         { }
     };
 
@@ -98,32 +81,6 @@ public:
     private:
         MsgGetDeviceInfo() :
             Message()
-        { }
-    };
-
-    class MsgReportLimeSDRToGUI : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        float    getCenterFrequency() const { return m_centerFrequency; }
-        int      getSampleRate() const { return m_sampleRate; }
-        uint32_t getLog2HardInterp() const { return m_log2HardInterp; }
-
-        static MsgReportLimeSDRToGUI* create(float centerFrequency, int sampleRate, uint32_t log2HardInterp)
-        {
-            return new MsgReportLimeSDRToGUI(centerFrequency, sampleRate, log2HardInterp);
-        }
-
-    private:
-        float    m_centerFrequency;
-        int      m_sampleRate;
-        uint32_t m_log2HardInterp;
-
-        MsgReportLimeSDRToGUI(float centerFrequency, int sampleRate, uint32_t log2HardInterp) :
-            Message(),
-            m_centerFrequency(centerFrequency),
-            m_sampleRate(sampleRate),
-            m_log2HardInterp(log2HardInterp)
         { }
     };
 
@@ -210,6 +167,7 @@ public:
 
     LimeSDROutput(DeviceSinkAPI *deviceAPI);
     virtual ~LimeSDROutput();
+    virtual void destroy();
 
     virtual bool start();
     virtual void stop();
@@ -234,7 +192,6 @@ private:
     QString m_deviceDescription;
     bool m_running;
     DeviceLimeSDRShared m_deviceShared;
-    bool m_firstConfig;
     bool m_channelAcquired;
 
     lms_stream_t m_streamId;
@@ -243,9 +200,11 @@ private:
     void closeDevice();
     bool acquireChannel();
     void releaseChannel();
-    void suspendBuddies();
-    void resumeBuddies();
-    bool applySettings(const LimeSDROutputSettings& settings, bool force = false);
+    void suspendRxBuddies();
+    void resumeRxBuddies();
+    void suspendTxBuddies();
+    void resumeTxBuddies();
+    bool applySettings(const LimeSDROutputSettings& settings, bool force = false, bool forceNCOFrequency = false);
 };
 
 #endif /* PLUGINS_SAMPLESOURCE_LIMESDROUTPUT_LIMESDROUTPUT_H_ */

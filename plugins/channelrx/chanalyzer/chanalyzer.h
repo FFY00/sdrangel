@@ -17,9 +17,11 @@
 #ifndef INCLUDE_CHANALYZER_H
 #define INCLUDE_CHANALYZER_H
 
-#include <dsp/basebandsamplesink.h>
 #include <QMutex>
 #include <vector>
+
+#include "dsp/basebandsamplesink.h"
+#include "channel/channelsinkapi.h"
 #include "dsp/ncof.h"
 #include "dsp/fftfilt.h"
 #include "audio/audiofifo.h"
@@ -27,10 +29,87 @@
 
 #define ssbFftLen 1024
 
-class ChannelAnalyzer : public BasebandSampleSink {
+class DeviceSourceAPI;
+class ThreadedBasebandSampleSink;
+class DownChannelizer;
+
+class ChannelAnalyzer : public BasebandSampleSink, public ChannelSinkAPI {
 public:
-	ChannelAnalyzer(BasebandSampleSink* m_sampleSink);
+    class MsgConfigureChannelAnalyzer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        Real getBandwidth() const { return m_Bandwidth; }
+        Real getLoCutoff() const { return m_LowCutoff; }
+        int  getSpanLog2() const { return m_spanLog2; }
+        bool getSSB() const { return m_ssb; }
+
+        static MsgConfigureChannelAnalyzer* create(Real Bandwidth,
+                Real LowCutoff,
+                int spanLog2,
+                bool ssb)
+        {
+            return new MsgConfigureChannelAnalyzer(Bandwidth, LowCutoff, spanLog2, ssb);
+        }
+
+    private:
+        Real m_Bandwidth;
+        Real m_LowCutoff;
+        int  m_spanLog2;
+        bool m_ssb;
+
+        MsgConfigureChannelAnalyzer(Real Bandwidth,
+                Real LowCutoff,
+                int spanLog2,
+                bool ssb) :
+            Message(),
+            m_Bandwidth(Bandwidth),
+            m_LowCutoff(LowCutoff),
+            m_spanLog2(spanLog2),
+            m_ssb(ssb)
+        { }
+    };
+
+    class MsgConfigureChannelizer : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        int getCenterFrequency() const { return m_centerFrequency; }
+
+        static MsgConfigureChannelizer* create(int centerFrequency)
+        {
+            return new MsgConfigureChannelizer(centerFrequency);
+        }
+
+    private:
+        int  m_centerFrequency;
+
+        MsgConfigureChannelizer(int centerFrequency) :
+            Message(),
+            m_centerFrequency(centerFrequency)
+        { }
+    };
+
+    class MsgReportChannelSampleRateChanged : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+
+        static MsgReportChannelSampleRateChanged* create()
+        {
+            return new MsgReportChannelSampleRateChanged();
+        }
+
+    private:
+
+        MsgReportChannelSampleRateChanged() :
+            Message()
+        { }
+    };
+
+	ChannelAnalyzer(DeviceSourceAPI *deviceAPI);
 	virtual ~ChannelAnalyzer();
+	void setSampleSink(BasebandSampleSink* sampleSink) { m_sampleSink = sampleSink; }
 
 	void configure(MessageQueue* messageQueue,
 			Real Bandwidth,
@@ -46,41 +125,19 @@ public:
 	virtual void stop();
 	virtual bool handleMessage(const Message& cmd);
 
+	virtual int getDeltaFrequency() const { return m_frequency; }
+	virtual void getIdentifier(QString& id) { id = objectName(); }
+	virtual void getTitle(QString& title) { title = objectName(); }
+
+    static const QString m_channelID;
+
+private slots:
+    void channelSampleRateChanged();
+
 private:
-	class MsgConfigureChannelAnalyzer : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		Real getBandwidth() const { return m_Bandwidth; }
-		Real getLoCutoff() const { return m_LowCutoff; }
-		int  getSpanLog2() const { return m_spanLog2; }
-		bool getSSB() const { return m_ssb; }
-
-		static MsgConfigureChannelAnalyzer* create(Real Bandwidth,
-				Real LowCutoff,
-				int spanLog2,
-				bool ssb)
-		{
-			return new MsgConfigureChannelAnalyzer(Bandwidth, LowCutoff, spanLog2, ssb);
-		}
-
-	private:
-		Real m_Bandwidth;
-		Real m_LowCutoff;
-		int  m_spanLog2;
-		bool m_ssb;
-
-		MsgConfigureChannelAnalyzer(Real Bandwidth,
-				Real LowCutoff,
-				int spanLog2,
-				bool ssb) :
-			Message(),
-			m_Bandwidth(Bandwidth),
-			m_LowCutoff(LowCutoff),
-			m_spanLog2(spanLog2),
-			m_ssb(ssb)
-		{ }
-	};
+    DeviceSourceAPI *m_deviceAPI;
+    ThreadedBasebandSampleSink* m_threadedChannelizer;
+    DownChannelizer* m_channelizer;
 
 	Real m_Bandwidth;
 	Real m_LowCutoff;

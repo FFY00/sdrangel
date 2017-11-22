@@ -17,25 +17,27 @@
 #ifndef INCLUDE_FILESOURCEGUI_H
 #define INCLUDE_FILESOURCEGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QWidget>
 
+#include "util/messagequeue.h"
+
 #include "filesourceinput.h"
 
-class DeviceSourceAPI;
+class DeviceUISet;
 
 namespace Ui {
 	class FileSourceGui;
 }
 
-class FileSourceGui : public QWidget, public PluginInstanceUI {
+class FileSourceGui : public QWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
-	explicit FileSourceGui(DeviceSourceAPI *deviceAPI, QWidget* parent = NULL);
+	explicit FileSourceGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
 	virtual ~FileSourceGui();
-	void destroy();
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -45,12 +47,13 @@ public:
 	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
+	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::FileSourceGui* ui;
 
-	DeviceSourceAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
 	FileSourceInput::Settings m_settings;
 	QTimer m_statusTimer;
 	std::vector<int> m_gains;
@@ -67,6 +70,7 @@ private:
     int m_deviceSampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
 	int m_lastEngineState;
+	MessageQueue m_inputMessageQueue;
 
 	void displaySettings();
 	void displayTime();
@@ -78,8 +82,7 @@ private:
 	void updateWithStreamTime();
 
 private slots:
-    void handleDSPMessages();
-	void handleSourceMessages();
+    void handleInputMessages();
 	void on_startStop_toggled(bool checked);
 	void on_playLoop_toggled(bool checked);
 	void on_play_toggled(bool checked);

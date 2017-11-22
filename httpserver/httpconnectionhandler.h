@@ -16,8 +16,9 @@
 #include "httpglobal.h"
 #include "httprequest.h"
 #include "httprequesthandler.h"
+#include "httplistenersettings.h"
 
-namespace stefanfrings {
+namespace qtwebapp {
 
 /** Alias type definition, for compatibility to different Qt versions */
 #if QT_VERSION >= 0x050000
@@ -54,11 +55,19 @@ public:
 
     /**
       Constructor.
-      @param settings Configuration settings of the HTTP webserver
+      @param settings Configuration settings of the HTTP webserver as Qt settings
       @param requestHandler Handler that will process each incoming HTTP request
       @param sslConfiguration SSL (HTTPS) will be used if not NULL
     */
     HttpConnectionHandler(QSettings* settings, HttpRequestHandler* requestHandler, QSslConfiguration* sslConfiguration=NULL);
+
+    /**
+      Constructor.
+      @param settings Configuration settings of the HTTP webserver as a structure
+      @param requestHandler Handler that will process each incoming HTTP request
+      @param sslConfiguration SSL (HTTPS) will be used if not NULL
+    */
+    HttpConnectionHandler(const HttpListenerSettings* settings, HttpRequestHandler* requestHandler, QSslConfiguration* sslConfiguration=NULL);
 
     /** Destructor */
     virtual ~HttpConnectionHandler();
@@ -69,10 +78,20 @@ public:
     /** Mark this handler as busy */
     void setBusy();
 
+    /**
+     * Get a listener settings constant reference. Can be changed on the HttpListener only.
+     * @return The current listener settings
+     */
+    const HttpListenerSettings *getListenerSettings() const { return listenerSettings; }
+
+
 private:
 
     /** Configuration settings */
     QSettings* settings;
+
+    /** Configuration settings */
+    const HttpListenerSettings* listenerSettings;
 
     /** TCP socket of the current connection  */
     QTcpSocket* socket;
@@ -97,6 +116,9 @@ private:
 
     /**  Create SSL or TCP socket */
     void createSocket();
+
+    /** Settings flag */
+    bool useQtSettings;
 
 public slots:
 

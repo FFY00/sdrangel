@@ -11,7 +11,7 @@
 
 const PluginDescriptor RTLSDRPlugin::m_pluginDescriptor = {
 	QString("RTL-SDR Input"),
-	QString("3.5.2"),
+	QString("3.8.0"),
 	QString("(c) Edouard Griffiths, F4EXB"),
 	QString("https://github.com/f4exb/sdrangel"),
 	true,
@@ -57,18 +57,39 @@ PluginInterface::SamplingDevices RTLSDRPlugin::enumSampleSources()
 		        m_hardwareID,
 				m_deviceTypeID,
 				QString(serial),
-				i));
+				i,
+				PluginInterface::SamplingDevice::PhysicalDevice,
+				true,
+				1,
+				0));
 	}
 	return result;
 }
 
-PluginInstanceUI* RTLSDRPlugin::createSampleSourcePluginInstanceUI(const QString& sourceId, QWidget **widget, DeviceSourceAPI *deviceAPI)
+PluginInstanceGUI* RTLSDRPlugin::createSampleSourcePluginInstanceGUI(
+        const QString& sourceId,
+        QWidget **widget,
+        DeviceUISet *deviceUISet)
 {
 	if(sourceId == m_deviceTypeID) {
-		RTLSDRGui* gui = new RTLSDRGui(deviceAPI);
+		RTLSDRGui* gui = new RTLSDRGui(deviceUISet);
 		*widget = gui;
 		return gui;
 	} else {
-		return NULL;
+		return 0;
 	}
 }
+
+DeviceSampleSource *RTLSDRPlugin::createSampleSourcePluginInstanceInput(const QString& sourceId, DeviceSourceAPI *deviceAPI)
+{
+    if (sourceId == m_deviceTypeID)
+    {
+        RTLSDRInput* input = new RTLSDRInput(deviceAPI);
+        return input;
+    }
+    else
+    {
+        return 0;
+    }
+}
+

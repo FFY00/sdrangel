@@ -60,6 +60,11 @@ BladerfInput::~BladerfInput()
     m_deviceAPI->setBuddySharedPtr(0);
 }
 
+void BladerfInput::destroy()
+{
+    delete this;
+}
+
 bool BladerfInput::openDevice()
 {
     if (m_dev != 0)
@@ -216,7 +221,7 @@ bool BladerfInput::handleMessage(const Message& message)
 		MsgConfigureBladerf& conf = (MsgConfigureBladerf&) message;
 		qDebug() << "BladerfInput::handleMessage: MsgConfigureBladerf";
 
-		if (!applySettings(conf.getSettings(), false))
+		if (!applySettings(conf.getSettings(), conf.getForce()))
 		{
 			qDebug("BladeRF config error");
 		}
@@ -249,14 +254,10 @@ bool BladerfInput::applySettings(const BladeRFInputSettings& settings, bool forc
 
 	qDebug() << "BladerfInput::applySettings: m_dev: " << m_dev;
 
-	if (m_settings.m_dcBlock != settings.m_dcBlock)
+	if ((m_settings.m_dcBlock != settings.m_dcBlock) ||
+	    (m_settings.m_iqCorrection != settings.m_iqCorrection) || force)
 	{
 		m_settings.m_dcBlock = settings.m_dcBlock;
-		m_deviceAPI->configureCorrections(m_settings.m_dcBlock, m_settings.m_iqCorrection);
-	}
-
-	if (m_settings.m_iqCorrection != settings.m_iqCorrection)
-	{
 		m_settings.m_iqCorrection = settings.m_iqCorrection;
 		m_deviceAPI->configureCorrections(m_settings.m_dcBlock, m_settings.m_iqCorrection);
 	}
@@ -510,7 +511,7 @@ bool BladerfInput::applySettings(const BladeRFInputSettings& settings, bool forc
 		int sampleRate = m_settings.m_devSampleRate/(1<<m_settings.m_log2Decim);
 		DSPSignalNotification *notif = new DSPSignalNotification(sampleRate, m_settings.m_centerFrequency);
         m_fileSink->handleMessage(*notif); // forward to file sink
-        m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+        m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
 	}
 
 	qDebug() << "BladerfInput::applySettings: center freq: " << m_settings.m_centerFrequency << " Hz"

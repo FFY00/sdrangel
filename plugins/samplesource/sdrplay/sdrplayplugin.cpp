@@ -25,7 +25,7 @@
 
 const PluginDescriptor SDRPlayPlugin::m_pluginDescriptor = {
     QString("SDRPlay RSP1 Input"),
-    QString("3.5.0"),
+    QString("3.8.0"),
     QString("(c) Edouard Griffiths, F4EXB"),
     QString("https://github.com/f4exb/sdrangel"),
     true,
@@ -77,17 +77,24 @@ PluginInterface::SamplingDevices SDRPlayPlugin::enumSampleSources()
 		        m_hardwareID,
 				m_deviceTypeID,
 				QString(serial),
-				i));
+				i,
+				PluginInterface::SamplingDevice::PhysicalDevice,
+				true,
+				1,
+				0));
 	}
 
     return result;
 }
 
-PluginInstanceUI* SDRPlayPlugin::createSampleSourcePluginInstanceUI(const QString& sourceId,QWidget **widget, DeviceSourceAPI *deviceAPI)
+PluginInstanceGUI* SDRPlayPlugin::createSampleSourcePluginInstanceGUI(
+        const QString& sourceId,
+        QWidget **widget,
+        DeviceUISet *deviceUISet)
 {
     if(sourceId == m_deviceTypeID)
     {
-        SDRPlayGui* gui = new SDRPlayGui(deviceAPI);
+        SDRPlayGui* gui = new SDRPlayGui(deviceUISet);
         *widget = gui;
         return gui;
     }
@@ -96,3 +103,17 @@ PluginInstanceUI* SDRPlayPlugin::createSampleSourcePluginInstanceUI(const QStrin
         return 0;
     }
 }
+
+DeviceSampleSource *SDRPlayPlugin::createSampleSourcePluginInstanceInput(const QString& sourceId, DeviceSourceAPI *deviceAPI)
+{
+    if (sourceId == m_deviceTypeID)
+    {
+        SDRPlayInput* input = new SDRPlayInput(deviceAPI);
+        return input;
+    }
+    else
+    {
+        return 0;
+    }
+}
+

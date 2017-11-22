@@ -40,6 +40,7 @@ BladerfOutput::BladerfOutput(DeviceSinkAPI *deviceAPI) :
 	m_deviceDescription("BladeRFOutput"),
 	m_running(false)
 {
+    m_sampleSourceFifo.resize(16*BLADERFOUTPUT_BLOCKSIZE);
     openDevice();
     m_deviceAPI->setBuddySharedPtr(&m_sharedParams);
 }
@@ -49,6 +50,11 @@ BladerfOutput::~BladerfOutput()
     if (m_running) stop();
     closeDevice();
     m_deviceAPI->setBuddySharedPtr(0);
+}
+
+void BladerfOutput::destroy()
+{
+    delete this;
 }
 
 bool BladerfOutput::openDevice()
@@ -202,7 +208,7 @@ bool BladerfOutput::handleMessage(const Message& message)
 		MsgConfigureBladerf& conf = (MsgConfigureBladerf&) message;
 		qDebug() << "BladerfInput::handleMessage: MsgConfigureBladerf";
 
-		if (!applySettings(conf.getSettings(), false))
+		if (!applySettings(conf.getSettings(), conf.getForce()))
 		{
 			qDebug("BladeRF config error");
 		}
@@ -453,7 +459,7 @@ bool BladerfOutput::applySettings(const BladeRFOutputSettings& settings, bool fo
 	{
 		int sampleRate = m_settings.m_devSampleRate/(1<<m_settings.m_log2Interp);
 		DSPSignalNotification *notif = new DSPSignalNotification(sampleRate, m_settings.m_centerFrequency);
-		m_deviceAPI->getDeviceInputMessageQueue()->push(notif);
+		m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
 	}
 
 	qDebug() << "BladerfOutput::applySettings: center freq: " << m_settings.m_centerFrequency << " Hz"

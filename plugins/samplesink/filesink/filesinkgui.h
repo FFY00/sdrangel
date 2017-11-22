@@ -17,28 +17,30 @@
 #ifndef INCLUDE_FILESINKGUI_H
 #define INCLUDE_FILESINKGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QWidget>
+
+#include "util/messagequeue.h"
 
 #include "filesinkoutput.h"
 #include "filesinksettings.h"
 
 
-class DeviceSinkAPI;
 class DeviceSampleSink;
+class DeviceUISet;
 
 namespace Ui {
 	class FileSinkGui;
 }
 
-class FileSinkGui : public QWidget, public PluginInstanceUI {
+class FileSinkGui : public QWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
-	explicit FileSinkGui(DeviceSinkAPI *deviceAPI, QWidget* parent = NULL);
+	explicit FileSinkGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
 	virtual ~FileSinkGui();
-	void destroy();
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -48,12 +50,14 @@ public:
 	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
+	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::FileSinkGui* ui;
 
-	DeviceSinkAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
+	bool m_forceSettings;
 	FileSinkSettings m_settings;
     QString m_fileName;
 	QTimer m_updateTimer;
@@ -66,6 +70,7 @@ private:
 	int m_samplesCount;
 	std::size_t m_tickCount;
 	int m_lastEngineState;
+	MessageQueue m_inputMessageQueue;
 
 	void displaySettings();
 	void displayTime();
@@ -76,8 +81,7 @@ private:
 	void updateSampleRateAndFrequency();
 
 private slots:
-    void handleDSPMessages();
-    void handleSinkMessages();
+    void handleInputMessages();
     void on_centerFrequency_changed(quint64 value);
     void on_sampleRate_changed(quint64 value);
 	void on_startStop_toggled(bool checked);

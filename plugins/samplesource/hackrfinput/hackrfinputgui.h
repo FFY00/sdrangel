@@ -17,21 +17,23 @@
 #ifndef INCLUDE_HACKRFINPUTGUI_H
 #define INCLUDE_HACKRFINPUTGUI_H
 
-#include <plugin/plugininstanceui.h>
+#include <plugin/plugininstancegui.h>
 #include <QTimer>
 #include <QWidget>
+
+#include "util/messagequeue.h"
 
 #include "hackrfinput.h"
 
 #define HACKRF_MAX_DEVICE (32)
 
-class DeviceSourceAPI;
+class DeviceUISet;
 
 namespace Ui {
 	class HackRFInputGui;
 }
 
-class HackRFInputGui : public QWidget, public PluginInstanceUI {
+class HackRFInputGui : public QWidget, public PluginInstanceGUI {
 	Q_OBJECT
 
 public:
@@ -43,9 +45,9 @@ public:
 		HACKRF_IMGREJ_NB
 	} HackRFImgRejValue;
 
-	explicit HackRFInputGui(DeviceSourceAPI *deviceAPI, QWidget* parent = NULL);
+	explicit HackRFInputGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
 	virtual ~HackRFInputGui();
-	void destroy();
+	virtual void destroy();
 
 	void setName(const QString& name);
 	QString getName() const;
@@ -55,28 +57,32 @@ public:
 	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
+	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::HackRFInputGui* ui;
 
-	DeviceSourceAPI* m_deviceAPI;
+	DeviceUISet* m_deviceUISet;
 	HackRFInputSettings m_settings;
 	bool m_forceSettings;
+	bool m_doApplySettings;
 	QTimer m_updateTimer;
 	QTimer m_statusTimer;
 	DeviceSampleSource* m_sampleSource;
     int m_sampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
 	int m_lastEngineState;
+	MessageQueue m_inputMessageQueue;
 
 	void displaySettings();
 	void displayBandwidths();
 	void sendSettings();
     void updateSampleRateAndFrequency();
+    void blockApplySettings(bool block);
 
 private slots:
-    void handleDSPMessages();
+    void handleInputMessages();
 	void on_centerFrequency_changed(quint64 value);
 	void on_sampleRate_changed(quint64 value);
 	void on_LOppm_valueChanged(int value);

@@ -15,8 +15,9 @@
 #include <QTemporaryFile>
 #include <QUuid>
 #include "httpglobal.h"
+#include "httplistenersettings.h"
 
-namespace stefanfrings {
+namespace qtwebapp {
 
 /**
   This object represents a single HTTP request. It reads the request
@@ -49,6 +50,12 @@ public:
       @param settings Configuration settings
     */
     HttpRequest(QSettings* settings);
+
+    /**
+      Constructor.
+      @param settings Configuration settings as a structure
+    */
+    HttpRequest(const HttpListenerSettings* settings);
 
     /**
       Destructor.
@@ -232,6 +239,8 @@ private:
     /** Buffer for collecting characters of request and header lines */
     QByteArray lineBuffer;
 
+    /** Settings flag */
+    bool useQtSettings;
 };
 
 } // end of namespace
